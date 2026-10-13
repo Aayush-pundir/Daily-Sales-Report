@@ -7,7 +7,7 @@
 --a0:#1d3556;--a1:#27528a;--a2:#3987e5;--a3:#8ebbf5}}
 *{box-sizing:border-box}
 :root{--font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--font);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{margin:0;min-width:1024px;background:var(--bg);color:var(--ink);font:14px/1.5 var(--font);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 h1,h2,h3{margin:0;font-weight:600}
 button,input,select,textarea{font:inherit;color:inherit}
 code{font-family:var(--mono);font-size:12px}
@@ -78,9 +78,9 @@ dialog .ft{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8
 .login{max-width:340px;margin:12vh auto;padding:0 16px}.login .card{display:grid;gap:12px}
 .muted{color:var(--ink3)}
 .help{font-size:13px;color:var(--ink2);line-height:1.6}.help li{margin-bottom:4px}
-@media(max-width:760px){.roll{grid-template-columns:1fr 1fr}.roll .k{border-radius:8px!important;margin:0 0 -1px 0!important}.roll .op{display:none}.form{grid-template-columns:1fr}main{padding:14px 12px 50px}.g2{grid-template-columns:1fr}}
+
 .grid>*{min-width:0}
-@media(max-width:760px){header.top{padding:8px 12px;gap:6px}nav{order:3;flex-basis:100%}.who{margin-left:auto}.bar>*{flex:1 1 140px}dialog .ft .btn{flex:1}}
+
 table.compact th,table.compact td{padding:7px 6px}table.compact th{white-space:normal;vertical-align:bottom}
 
 /* ---- fit & type system ---- */
@@ -99,12 +99,4 @@ tr.click{cursor:pointer}tr.click:focus-visible,.item:focus-visible{outline:2px s
 .hint{max-width:70ch}
 nav{overflow-x:auto;scrollbar-width:none}nav button{white-space:nowrap}
 .bar .sub{max-width:60ch}
-@media(max-width:760px){
-  .hide-sm{display:none!important}
-  header.top{gap:4px}nav{order:3;flex:1 0 100%;flex-wrap:nowrap}.who{margin-left:auto}
-  td.clip{max-width:46vw}
-  th,td{padding:8px 8px}
-  .roll .val{font-size:20px}.roll .k:last-child{grid-column:1/-1}
-  .item{flex-direction:column;gap:4px}
-  .card{padding:14px}
-}
+
