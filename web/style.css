@@ -78,3 +78,4 @@ dialog .ft{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8
 @media(max-width:760px){.roll{grid-template-columns:1fr 1fr}.roll .k{border-radius:8px!important;margin:0 0 -1px 0!important}.roll .op{display:none}.form{grid-template-columns:1fr}main{padding:14px 12px 50px}.g2{grid-template-columns:1fr}}
 .grid>*{min-width:0}
 @media(max-width:760px){header.top{padding:8px 12px;gap:6px}nav{order:3;flex-basis:100%}.who{margin-left:auto}.bar>*{flex:1 1 140px}dialog .ft .btn{flex:1}}
+table.compact th,table.compact td{padding:7px 6px}table.compact th{white-space:normal;vertical-align:bottom}

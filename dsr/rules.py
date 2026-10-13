@@ -69,7 +69,7 @@ def validate_estimate(d, sm_names, today, allowed_owner=None):
         if date(py, pm, 1) > today.replace(day=1): errs.append("Report month cannot be in the future.")
     except (ValueError, AssertionError, KeyError):
         errs.append("Report month must be YYYY-MM.")
-    owners = sorted({norm_name(o) for o in d.get("owners") or [] if norm_name(o)})
+    owners = list(dict.fromkeys(norm_name(o) for o in d.get("owners") or [] if norm_name(o)))  # first = primary
     if not owners: errs.append("Pick at least one sales manager.")
     if len(owners) > 3: errs.append("At most 3 sales managers per estimate.")
     bad = [o for o in owners if o not in sm_names]
@@ -92,7 +92,7 @@ def validate_estimate(d, sm_names, today, allowed_owner=None):
     return c, errs
 
 
-def build_report(estimates, targets, month, as_on, split=False):
+def build_report(estimates, targets, month, as_on, credit="team"):
     """estimates: dicts with number, est_date, owners, status, closed_on, lines[{category, amount}].
     Roll-forward per workbook: Opening + New - Converted - Dropped = Closing (pending)."""
     start, mend = month_bounds(month)
@@ -109,8 +109,9 @@ def build_report(estimates, targets, month, as_on, split=False):
         ed = parse_date(e["est_date"])
         cl = parse_date(e["closed_on"]) if e["status"] != "pending" else None
         amount = sum(l["amount"] for l in e["lines"])
-        keys = e["owners"].split("|") if split else [e["owners"]]
-        w = 1 / len(keys) if split else 1
+        names = e["owners"].split("|")   # first name is the primary salesperson
+        keys = {"team": [e["owners"]], "primary": names[:1], "split": names}[credit]
+        w = 1 / len(keys) if credit == "split" else 1
         events = []
         # An estimate belongs to the report month (`period`) it was booked in; that can differ from
         # its date (e.g. raised on 8 Oct but filed under September), as in the legacy Reporting sheet.
@@ -154,8 +155,8 @@ def build_report(estimates, targets, month, as_on, split=False):
         trend.append({"month": ym, "actual": None if no_data else (n if (n or legacy is None) else legacy), "actual_amount": amt,
                       "target": t.get("target_count"), "target_amount": t.get("target_amount"),
                       "from_legacy": bool(legacy is not None and not n)})
-    rows = [{"team": team_label(k) if not split else k, **v} for k, v in teams.items()]
+    rows = [{"team": team_label(k) if credit == "team" else k, **v} for k, v in teams.items()]
     rows.sort(key=lambda r: -r["closing"])
-    return {"month": month, "as_on": end.isoformat(), "split": split, "total": total, "teams": rows,
+    return {"month": month, "as_on": end.isoformat(), "credit": credit, "total": total, "teams": rows,
             "segments": seg, "ageing_segments": ageing_seg, "ageing_count": ageing_n,
             "trend": trend, "pending_by_value": sorted(top_pending, key=lambda r: -r["amount"])[:10]}

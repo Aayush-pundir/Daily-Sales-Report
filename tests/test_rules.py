@@ -32,8 +32,15 @@ class Rollforward(unittest.TestCase):
 
     def test_split_credit(self):
         e = [est("j", "2026-10-01", "A|B", lines=(("Annual fees", 100),))]
-        r = rules.build_report(e, {}, "2026-10", date(2026, 10, 13), split=True)
+        r = rules.build_report(e, {}, "2026-10", date(2026, 10, 13), credit="split")
         self.assertEqual({t["team"]: t["new"] for t in r["teams"]}, {"A": 50, "B": 50})
+
+    def test_primary_order_is_kept(self):
+        e = [est("1", "2026-10-01", "A|B"), est("2", "2026-10-01", "B|A")]
+        r = rules.build_report(e, {}, "2026-10", date(2026, 10, 13))
+        self.assertEqual(sorted(t["team"] for t in r["teams"]), ["A & B", "B & A"])
+        p = rules.build_report(e, {}, "2026-10", date(2026, 10, 13), credit="primary")
+        self.assertEqual({t["team"]: t["new"] for t in p["teams"]}, {"A": 100, "B": 100})
 
     def test_buckets(self):
         self.assertEqual([rules.bucket(n) for n in (0, 30, 31, 60, 61, 90, 91)], ["0-30", "0-30", "31-60", "31-60", "61-90", "61-90", "90+"])

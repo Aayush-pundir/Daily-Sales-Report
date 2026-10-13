@@ -5,10 +5,11 @@ const inr = n => Math.round(n || 0).toLocaleString("en-IN");
 const compact = n => { n = n || 0; const a = Math.abs(n); return a >= 1e7 ? (n / 1e7).toFixed(2) + " Cr" : a >= 1e5 ? (n / 1e5).toFixed(2) + " L" : a >= 1e3 ? (n / 1e3).toFixed(1) + "K" : String(Math.round(n)); };
 const fdate = s => s ? new Date(s + "T00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "";
 const fmonth = ym => new Date(ym + "-01T00:00").toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+const teamHtml = t => { const [p, ...rest] = String(t).split(" & "); return `<b>${esc(p)}</b>${rest.map(r => " &amp; " + esc(r)).join("")}`; };
 const CAT_COLOR = { "Annual fees": "var(--s1)", "Set-up fees": "var(--s2)", "Integration": "var(--s3)", "Customisation": "var(--s4)" };
 const AGE_COLOR = ["var(--a0)", "var(--a1)", "var(--a2)", "var(--a3)"];
 
-const S = { me: null, meta: null, tab: "dashboard", month: null, split: false, filters: { status: "pending" } };
+const S = { me: null, meta: null, tab: "dashboard", month: null, credit: "team", filters: { status: "pending" } };
 
 async function api(path, opt = {}) {
   const r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined });
@@ -77,40 +78,40 @@ function monthOptions() {
   return out;
 }
 async function dashboard(el) {
-  const r = await api(`report?month=${S.month}&split=${S.split ? 1 : 0}`);
+  const r = await api(`report?month=${S.month}&credit=${S.credit}`);
   const t = r.total, nz = (a, b) => b ? Math.round(a / b * 100) : 0;
   const lastPub = r.last_published;
   el.innerHTML = `
   <div class="bar"><div style="margin-right:auto"><h2>Report as on ${fdate(r.as_on)}</h2>
       <div class="sub">${lastPub ? `Last published ${fdate(lastPub.day)} by ${esc(lastPub.published_by)}` : "Not yet published"} · amounts are estimate sub-totals (before tax)</div></div>
     <label class="f">Month<select id="mon">${monthOptions().map(m => `<option value="${m}" ${m === S.month ? "selected" : ""}>${fmonth(m)}</option>`).join("")}</select></label>
-    <label class="f">Credit<select id="split"><option value="0">Team as entered</option><option value="1" ${S.split ? "selected" : ""}>Split equally per person</option></select></label>
+    <label class="f">Credit<select id="split"><option value="team">Team, primary first</option><option value="primary" ${S.credit === "primary" ? "selected" : ""}>Primary salesperson only</option><option value="split" ${S.credit === "split" ? "selected" : ""}>Split equally</option></select></label>
     <a class="btn" href="/api/export.csv" download>Export CSV</a>
     ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
   ${r.pending_drop_requests && can("finance") ? `<div class="attn"><button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button></div>` : ""}
   <div class="roll">
     ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−"], ["Dropped / written off", t.dropped, t.dropped_n, "−"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
-      .map(([l, v, n, op]) => `<div class="k">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.split ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
+      .map(([l, v, n, op]) => `<div class="k">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
   </div>
   <div class="grid g2" style="margin-bottom:16px">
     <div class="card"><h3>Conversions vs monthly target</h3><div class="hint">Estimates converted to tax invoices (count). Dashed tick = target set by finance.</div>${trendChart(r.trend)}</div>
     <div class="card"><h3>Ageing of closing estimates</h3><div class="hint">Value still pending, by days since estimate date and fee type.</div>${ageingChart(r)}</div>
   </div>
-  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.split ? "person" : "team"}. Click a row to list their pending estimates.</div>
-    <div class="scroll"><table><thead><tr><th>${S.split ? "Sales manager" : "Team"}</th><th class="r">Opening</th><th class="r">+ New</th><th class="r">− Converted</th><th class="r">− Dropped</th><th class="r">Closing</th><th class="r">%</th><th>Closing by age</th></tr></thead><tbody>
-    ${r.teams.map(x => `<tr data-team="${esc(x.team)}" style="cursor:pointer"><td>${esc(x.team)}</td><td class="r num">${inr(x.opening)}</td><td class="r num">${inr(x.new)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.dropped)}</td><td class="r num"><b>${inr(x.closing)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
+  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a row to list their pending estimates.</div>
+    <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th><th class="r">Opening</th><th class="r">+ New</th><th class="r">− Converted</th><th class="r">− Dropped</th><th class="r">Closing</th><th class="r">%</th><th>Closing by age</th></tr></thead><tbody>
+    ${r.teams.map(x => `<tr data-team="${esc(x.team)}" style="cursor:pointer"><td>${teamHtml(x.team)}</td><td class="r num">${inr(x.opening)}</td><td class="r num">${inr(x.new)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.dropped)}</td><td class="r num"><b>${inr(x.closing)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
     <tr class="total"><td>Total</td><td class="r num">${inr(t.opening)}</td><td class="r num">${inr(t.new)}</td><td class="r num">${inr(t.converted)}</td><td class="r num">${inr(t.dropped)}</td><td class="r num">${inr(t.closing)}</td><td class="r num">100%</td><td></td></tr></tbody></table></div></div>
   <div class="grid g2">
-    <div class="card"><h3>Revenue segment report</h3><div class="hint">Same roll-forward, by fee type.</div><div class="scroll"><table><thead><tr><th></th>${S.meta.categories.map(c => `<th class="r"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${CAT_COLOR[c]}"></i>${c}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
+    <div class="card"><h3>Revenue segment report</h3><div class="hint">Same roll-forward, by fee type.</div><div class="scroll"><table class="compact"><thead><tr><th></th>${S.meta.categories.map(c => `<th class="r"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${CAT_COLOR[c]}"></i>${c}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
       ${[["Opening", "opening"], ["+ New", "new"], ["− Converted", "converted"], ["− Dropped", "dropped"], ["Closing", "closing"]].map(([l, k]) => `<tr class="${k === "closing" ? "total" : ""}"><td>${l}</td>${S.meta.categories.map(c => `<td class="r num">${inr(r.segments[k][c])}</td>`).join("")}<td class="r num">${inr(Object.values(r.segments[k]).reduce((a, b) => a + b, 0))}</td></tr>`).join("")}</tbody></table></div></div>
     <div class="card"><h3>Largest pending estimates</h3><div class="hint">Top 10 by value.</div><div class="scroll"><table><thead><tr><th>Customer</th><th>SM</th><th class="r">Age</th><th class="r">Amount</th></tr></thead><tbody>
-      ${r.pending_by_value.map(p => `<tr><td>${esc(p.customer.slice(0, 32))}</td><td>${esc(p.owners.replace("|", " & "))}</td><td class="r num">${p.age}d</td><td class="r num">${inr(p.amount)}</td></tr>`).join("")}</tbody></table></div></div>
+      ${r.pending_by_value.map(p => `<tr><td>${esc(p.customer.slice(0, 32))}</td><td>${teamHtml(p.owners.replace(/\|/g, " & "))}</td><td class="r num">${p.age}d</td><td class="r num">${inr(p.amount)}</td></tr>`).join("")}</tbody></table></div></div>
   </div>`;
   $("#mon").onchange = e => { S.month = e.target.value; render(); };
-  $("#split").onchange = e => { S.split = e.target.value === "1"; render(); };
+  $("#split").onchange = e => { S.credit = e.target.value; render(); };
   if ($("#pub")) $("#pub").onclick = async () => { try { await api("snapshots", { method: "POST", body: {} }); toast("Report published"); render(); } catch (e) { toast(e.message); } };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
-  el.querySelectorAll("tr[data-team]").forEach(tr => tr.onclick = () => { S.filters = { status: "pending", sm: S.split ? tr.dataset.team : tr.dataset.team.split(" & ")[0] }; S.tab = "estimates"; render(); });
+  el.querySelectorAll("tr[data-team]").forEach(tr => tr.onclick = () => { S.filters = { status: "pending", sm: tr.dataset.team.split(" & ")[0] }; S.tab = "estimates"; render(); });
 }
 function ageBar(ag, tot, name) {
   if (!tot) return "";
@@ -153,7 +154,7 @@ async function estimates(el) {
     <label class="f">Age<select id="fb">${opt(S.meta.buckets, f.bucket, "All")}</select></label>
     ${can("sales") ? `<button class="btn primary" id="new">+ New estimate</button>` : ""}</div>
     <div class="card scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th>Status</th><th class="r">Age</th></tr></thead><tbody>
-    ${rows.map(r => `<tr data-id="${r.id}" style="cursor:pointer"><td>${esc(r.number)}</td><td>${fdate(r.est_date)}</td><td>${esc(r.customer.slice(0, 38))}</td><td>${esc(r.team)}</td>
+    ${rows.map(r => `<tr data-id="${r.id}" style="cursor:pointer"><td>${esc(r.number)}</td><td>${fdate(r.est_date)}</td><td>${esc(r.customer.slice(0, 38))}</td><td>${teamHtml(r.team)}</td>
       <td>${r.categories.map(c => `<span class="legend" style="display:inline-flex;margin:0 6px 0 0"><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</td>
       <td class="r num">${inr(r.total)}</td><td>${pill(r)}</td><td class="r num">${r.age ?? ""}${r.age != null ? "d" : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>`}</tbody></table></div>`;
   const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
@@ -172,7 +173,8 @@ function editor(e) {
     <label>Estimate number<input name="number" required value="${esc(e?.number || "")}" placeholder="EST-26-27/264"></label>
     <label>Estimate date<input name="est_date" type="date" required max="${S.meta.today}" value="${e?.est_date || S.meta.today}"></label>
     <label class="full">Customer<input name="customer" required value="${esc(e?.customer || "")}"></label>
-    <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Sales manager(s) — pick more than one for a joint deal</div><div class="chips">${S.meta.sms.map(n => `<label><input type="checkbox" name="own" value="${esc(n)}" ${own.includes(n) ? "checked" : ""}>${esc(n)}</label>`).join("")}</div></div>
+    <label class="full">Primary salesperson<select name="primary">${S.meta.sms.map(n => `<option ${n === own[0] ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+    <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Also credited (joint deal) — optional</div><div class="chips">${S.meta.sms.map(n => `<label><input type="checkbox" name="own" value="${esc(n)}" ${own.slice(1).includes(n) ? "checked" : ""}>${esc(n)}</label>`).join("")}</div></div>
     <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Fees (₹, exclusive of tax — leave blank if not applicable)</div><div class="form">${cats.map(c => `<label><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${CAT_COLOR[c]};margin-right:5px"></i>${c}</span><input type="number" min="0" step="0.01" name="cat_${esc(c)}" value="${lines[c] ?? ""}"></label>`).join("")}</div></div>
     <label>Report month<input name="period" type="month" required max="${S.meta.today.slice(0, 7)}" value="${e?.period || S.meta.today.slice(0, 7)}"></label><div class="muted full" style="font-size:12px;margin-top:-6px">The month this estimate is counted in (normally the estimate date's month).</div>
     <label class="full">Notes<textarea name="notes" rows="2">${esc(e?.notes || "")}</textarea></label></form><div id="ee"></div>`,
@@ -181,7 +183,7 @@ function editor(e) {
       $("#sv").onclick = async () => {
         const f = $("#ef"); if (!f.reportValidity()) return;
         const body = { number: f.number.value, est_date: f.est_date.value, period: f.period.value, customer: f.customer.value, notes: f.notes.value, version: e?.version,
-          owners: [...f.querySelectorAll("[name=own]:checked")].map(x => x.value),
+          owners: [f.primary.value, ...[...f.querySelectorAll("[name=own]:checked")].map(x => x.value)],
           lines: cats.map(c => ({ category: c, amount: f["cat_" + c].value })).filter(l => l.amount !== "" && +l.amount !== 0) };
         try { await api(isNew ? "estimates" : "estimates/" + e.id, { method: isNew ? "POST" : "PUT", body }); closeModal(); toast("Saved"); render(); }
         catch (er) { $("#ee").innerHTML = `<div class="err">${(er.data?.errors || [er.message]).map(esc).join("<br>")}</div>`; }
@@ -199,7 +201,7 @@ async function detail(id) {
     if (S.me.role === "sales" && mineOrAdmin && !e.drop_requested_by) btns.push(`<button class="btn danger" id="a-dreq">Propose drop…</button>`);
     if (can("sales") && mineOrAdmin) btns.push(`<button class="btn" id="a-edit">Edit</button>`);
   } else if (S.me.role === "admin") btns.push(`<button class="btn" id="a-reopen">Reopen…</button>`);
-  const kv = [["Customer", esc(e.customer)], ["Report month", fmonth(e.period)], ["Estimate date", fdate(e.est_date) + (e.age != null ? ` · ${e.age} days old` : "")], ["Sales manager", esc(e.owners.replace("|", " & "))],
+  const kv = [["Customer", esc(e.customer)], ["Report month", fmonth(e.period)], ["Estimate date", fdate(e.est_date) + (e.age != null ? ` · ${e.age} days old` : "")], ["Primary salesperson", esc(e.owners.split("|")[0])], ...(e.owners.includes("|") ? [["Also credited", esc(e.owners.split("|").slice(1).join(", "))]] : []),
     ...e.lines.map(l => [l.category, "₹ " + inr(l.amount)]), ["Total", `<b>₹ ${inr(e.total)}</b>`]];
   if (e.status === "received") kv.push(["Tax invoice", `${esc(e.invoice_no)} · ${fdate(e.invoice_date)}`], ["Payment received", fdate(e.closed_on) + (e.closed_approx ? " (approx., from legacy sheet)" : "")], ["Payment ref", esc(e.payment_ref || "—")]);
   if (e.status === "dropped") kv.push(["Dropped on", fdate(e.closed_on) + (e.closed_approx ? " (approx.)" : "")], ["Reason", esc(e.drop_reason || "—")]);
@@ -249,7 +251,7 @@ async function finance(el) {
   <div class="card"><h3>Monthly targets</h3><div class="hint">Number of estimates expected to convert to tax invoices.</div>
     <table><thead><tr><th>Month</th><th class="r">Count</th><th class="r">Amount (₹, optional)</th><th></th></tr></thead><tbody>${[...months, ...fut].map(m => `<tr><td>${fmonth(m)}</td><td class="r"><input style="width:80px" type="number" min="0" data-t="${m}" data-k="target_count" value="${t[m]?.target_count ?? ""}"></td><td class="r"><input style="width:120px" type="number" min="0" data-t="${m}" data-k="target_amount" value="${t[m]?.target_amount ?? ""}"></td><td><button class="btn sm" data-save="${m}">Save</button></td></tr>`).join("")}</tbody></table></div></div>
   <div class="card" style="margin-top:16px"><h3>Pending — oldest first (${pend.length})</h3><div class="hint">Open an estimate to record the payment and tax invoice.</div><div class="scroll"><table><thead><tr><th>Estimate</th><th>Customer</th><th>SM</th><th class="r">Amount</th><th class="r">Age</th><th></th></tr></thead><tbody>
-  ${pend.sort((a, b) => b.age - a.age).slice(0, 40).map(r => `<tr data-id="${r.id}" style="cursor:pointer"><td>${esc(r.number)}</td><td>${esc(r.customer.slice(0, 36))}</td><td>${esc(r.team)}</td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}</td></tr>`).join("")}</tbody></table></div></div>`;
+  ${pend.sort((a, b) => b.age - a.age).slice(0, 40).map(r => `<tr data-id="${r.id}" style="cursor:pointer"><td>${esc(r.number)}</td><td>${esc(r.customer.slice(0, 36))}</td><td>${teamHtml(r.team)}</td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}</td></tr>`).join("")}</tbody></table></div></div>`;
   el.querySelectorAll("tr[data-id]").forEach(tr => tr.onclick = () => detail(+tr.dataset.id));
   el.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
     const m = b.dataset.save, g = k => el.querySelector(`[data-t="${m}"][data-k="${k}"]`).value;
@@ -285,7 +287,7 @@ async function rulesTab(el) {
    <li><b>Opening</b> = estimates booked in earlier months that were still pending on the 1st. <b>New</b> = estimates booked in the month (the <i>report month</i> on each estimate, normally its date's month). <b>Converted / Dropped</b> = closed in the month (any estimate date).</li>
    <li><b>Closing = Opening + New − Converted − Dropped</b> = what is pending as on the report date. Because closure dates are stored, you can pick any past month and get the same answer the workbook would have given.</li>
    <li><b>Age</b> = report date − estimate date: 0–30, 31–60, 61–90, 90+ days.</li>
-   <li>Joint deals ("A &amp; B") show as their own team row, as in the workbook; switch <i>Credit</i> to "split equally" to attribute them per person.</li></ul></div>
+   <li>The first name on an estimate is the <b>primary salesperson</b>. "A &amp; B" and "B &amp; A" are separate rows, as in the workbook; switch <i>Credit</i> to count joint deals for the primary only, or split them equally.</li></ul></div>
   <div class="card help"><h3>Daily routine</h3><ul><li>Sales update estimates through the day.</li><li>Finance records receipts and decisions.</li><li>Finance clicks <b>Publish today's report</b> — it freezes the day's numbers under <i>Published reports</i> and anyone can open the dashboard live instead of waiting for the email.</li></ul></div></div>`;
 }
 

@@ -24,7 +24,7 @@ def d(v):
 
 def owners_of(s):
     names = [ALIASES.get(rules.norm_name(p), rules.norm_name(p)) for p in str(s or "").split("&")]
-    return "|".join(sorted({n for n in names if n}))
+    return "|".join(dict.fromkeys(n for n in names if n))  # keep order: first = primary
 
 
 def period(v):

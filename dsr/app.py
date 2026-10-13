@@ -124,7 +124,7 @@ class H(BaseHTTPRequestHandler):
         if not re.fullmatch(r"\d{4}-\d{2}", ym): raise Err(400, "month must be YYYY-MM")
         as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
         tg = {r["month"]: dict(r) for r in c.execute("SELECT * FROM targets")}
-        r = rules.build_report(db.load_estimates(c), tg, ym, as_on, split=q.get("split") == "1")
+        r = rules.build_report(db.load_estimates(c), tg, ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
         r["target"] = tg.get(ym)
         s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
