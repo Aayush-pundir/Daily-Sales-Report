@@ -193,8 +193,8 @@ class H(BaseHTTPRequestHandler):
         if not errs and c.execute("SELECT 1 FROM estimates WHERE number=?", (clean["number"],)).fetchone():
             errs.append(f'Estimate {clean["number"]} already exists.')
         if errs: raise Err(422, errs[0], {"errors": errs})
-        cur = c.execute("INSERT INTO estimates(number,est_date,customer,owners,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-                        (clean["number"], clean["est_date"], clean["customer"], clean["owners"], clean["notes"], user["name"], db.now(), db.now()))
+        cur = c.execute("INSERT INTO estimates(number,est_date,period,customer,owners,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (clean["number"], clean["est_date"], clean["period"], clean["customer"], clean["owners"], clean["notes"], user["name"], db.now(), db.now()))
         db.save_lines(c, cur.lastrowid, clean["lines"])
         db.log(c, cur.lastrowid, user["name"], "created", f'{sum(l["amount"] for l in clean["lines"]):g}')
         return {"id": cur.lastrowid}
@@ -223,10 +223,10 @@ class H(BaseHTTPRequestHandler):
             if not errs and clean["number"] != e["number"] and c.execute("SELECT 1 FROM estimates WHERE number=?", (clean["number"],)).fetchone():
                 errs.append(f'Estimate {clean["number"]} already exists.')
             if errs: raise Err(422, errs[0], {"errors": errs})
-            changes = [f'{k}: {e[k]} → {clean[k]}' for k in ("number", "est_date", "customer", "owners", "notes") if e[k] != clean[k]]
+            changes = [f'{k}: {e[k]} → {clean[k]}' for k in ("number", "est_date", "period", "customer", "owners", "notes") if e[k] != clean[k]]
             if sorted((l["category"], l["amount"]) for l in e["lines"]) != sorted((l["category"], l["amount"]) for l in clean["lines"]):
                 changes.append(f'fees: {e["total"]:g} → {sum(l["amount"] for l in clean["lines"]):g}')
-            bump(number=clean["number"], est_date=clean["est_date"], customer=clean["customer"], owners=clean["owners"], notes=clean["notes"])
+            bump(number=clean["number"], est_date=clean["est_date"], period=clean["period"], customer=clean["customer"], owners=clean["owners"], notes=clean["notes"])
             db.save_lines(c, eid, clean["lines"]); db.log(c, eid, who, "edited", "; ".join(changes) or "no change")
         elif act == "receive":                              # finance records payment => converted to tax invoice
             need(user, "finance")

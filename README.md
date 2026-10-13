@@ -30,7 +30,7 @@ Data lives in `data/dsr.sqlite3` (git-ignored; back it up). Put it behind HTTPS 
 See `dsr/rules.py` and the in-app **Rules** tab. In short: unique estimate numbers; one estimate has one status and several
 fee lines (Annual / Set-up / Integration / Customisation); no future dates; invoice number mandatory to mark received;
 closed estimates locked; every change audited; optimistic locking on edits.
-**Closing = Opening + New − Converted − Dropped**, computed from estimate dates and close dates, so any month / as-on date works.
+**Closing = Opening + New − Converted − Dropped**, computed from each estimate's report month and close date, so any month / as-on date works.
 
 ## Layout
 `dsr/` server, rules, importer · `web/` UI · `tests/` rule tests.

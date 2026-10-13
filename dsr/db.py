@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT UNIQUE NO
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sms(name TEXT PRIMARY KEY, active INTEGER DEFAULT 1);
 CREATE TABLE IF NOT EXISTS estimates(id INTEGER PRIMARY KEY, number TEXT UNIQUE NOT NULL, est_date TEXT NOT NULL,
-  customer TEXT NOT NULL, owners TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  customer TEXT NOT NULL, period TEXT, owners TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
   closed_on TEXT, closed_approx INTEGER DEFAULT 0,
   drop_reason TEXT, drop_requested_by TEXT, drop_requested_on TEXT,
   invoice_no TEXT, invoice_date TEXT, payment_ref TEXT,
@@ -29,6 +29,9 @@ def connect(path=None):
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.executescript(SCHEMA)
+    if "period" not in [r[1] for r in c.execute("PRAGMA table_info(estimates)")]:
+        c.execute("ALTER TABLE estimates ADD COLUMN period TEXT")
+        c.execute("UPDATE estimates SET period=substr(est_date,1,7)")
     return c
 
 

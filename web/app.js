@@ -174,12 +174,13 @@ function editor(e) {
     <label class="full">Customer<input name="customer" required value="${esc(e?.customer || "")}"></label>
     <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Sales manager(s) — pick more than one for a joint deal</div><div class="chips">${S.meta.sms.map(n => `<label><input type="checkbox" name="own" value="${esc(n)}" ${own.includes(n) ? "checked" : ""}>${esc(n)}</label>`).join("")}</div></div>
     <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Fees (₹, exclusive of tax — leave blank if not applicable)</div><div class="form">${cats.map(c => `<label><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${CAT_COLOR[c]};margin-right:5px"></i>${c}</span><input type="number" min="0" step="0.01" name="cat_${esc(c)}" value="${lines[c] ?? ""}"></label>`).join("")}</div></div>
+    <label>Report month<input name="period" type="month" required max="${S.meta.today.slice(0, 7)}" value="${e?.period || S.meta.today.slice(0, 7)}"></label><div class="muted full" style="font-size:12px;margin-top:-6px">The month this estimate is counted in (normally the estimate date's month).</div>
     <label class="full">Notes<textarea name="notes" rows="2">${esc(e?.notes || "")}</textarea></label></form><div id="ee"></div>`,
     `<button class="btn" id="cx">Cancel</button><button class="btn primary" id="sv">Save</button>`, () => {
       $("#cx").onclick = closeModal;
       $("#sv").onclick = async () => {
         const f = $("#ef"); if (!f.reportValidity()) return;
-        const body = { number: f.number.value, est_date: f.est_date.value, customer: f.customer.value, notes: f.notes.value, version: e?.version,
+        const body = { number: f.number.value, est_date: f.est_date.value, period: f.period.value, customer: f.customer.value, notes: f.notes.value, version: e?.version,
           owners: [...f.querySelectorAll("[name=own]:checked")].map(x => x.value),
           lines: cats.map(c => ({ category: c, amount: f["cat_" + c].value })).filter(l => l.amount !== "" && +l.amount !== 0) };
         try { await api(isNew ? "estimates" : "estimates/" + e.id, { method: isNew ? "POST" : "PUT", body }); closeModal(); toast("Saved"); render(); }
@@ -198,7 +199,7 @@ async function detail(id) {
     if (S.me.role === "sales" && mineOrAdmin && !e.drop_requested_by) btns.push(`<button class="btn danger" id="a-dreq">Propose drop…</button>`);
     if (can("sales") && mineOrAdmin) btns.push(`<button class="btn" id="a-edit">Edit</button>`);
   } else if (S.me.role === "admin") btns.push(`<button class="btn" id="a-reopen">Reopen…</button>`);
-  const kv = [["Customer", esc(e.customer)], ["Estimate date", fdate(e.est_date) + (e.age != null ? ` · ${e.age} days old` : "")], ["Sales manager", esc(e.owners.replace("|", " & "))],
+  const kv = [["Customer", esc(e.customer)], ["Report month", fmonth(e.period)], ["Estimate date", fdate(e.est_date) + (e.age != null ? ` · ${e.age} days old` : "")], ["Sales manager", esc(e.owners.replace("|", " & "))],
     ...e.lines.map(l => [l.category, "₹ " + inr(l.amount)]), ["Total", `<b>₹ ${inr(e.total)}</b>`]];
   if (e.status === "received") kv.push(["Tax invoice", `${esc(e.invoice_no)} · ${fdate(e.invoice_date)}`], ["Payment received", fdate(e.closed_on) + (e.closed_approx ? " (approx., from legacy sheet)" : "")], ["Payment ref", esc(e.payment_ref || "—")]);
   if (e.status === "dropped") kv.push(["Dropped on", fdate(e.closed_on) + (e.closed_approx ? " (approx.)" : "")], ["Reason", esc(e.drop_reason || "—")]);
@@ -281,7 +282,7 @@ async function rulesTab(el) {
    <li>Amounts must be positive. Sales can only raise/edit estimates they are a named sales manager on.</li>
    <li>Closed (received/dropped) estimates are locked. Every change is logged; two people editing the same estimate can't overwrite each other.</li></ul></div>
   <div class="card help"><h3>How the numbers are built</h3><ul>
-   <li><b>Opening</b> = estimates dated before the month that were still pending on the 1st. <b>New</b> = dated in the month. <b>Converted / Dropped</b> = closed in the month (any estimate date).</li>
+   <li><b>Opening</b> = estimates booked in earlier months that were still pending on the 1st. <b>New</b> = estimates booked in the month (the <i>report month</i> on each estimate, normally its date's month). <b>Converted / Dropped</b> = closed in the month (any estimate date).</li>
    <li><b>Closing = Opening + New − Converted − Dropped</b> = what is pending as on the report date. Because closure dates are stored, you can pick any past month and get the same answer the workbook would have given.</li>
    <li><b>Age</b> = report date − estimate date: 0–30, 31–60, 61–90, 90+ days.</li>
    <li>Joint deals ("A &amp; B") show as their own team row, as in the workbook; switch <i>Credit</i> to "split equally" to attribute them per person.</li></ul></div>

@@ -3,7 +3,7 @@ from datetime import date
 from dsr import rules
 
 def est(n, d, owners, status="pending", closed=None, lines=(("Annual fees", 100),)):
-    return {"number": n, "customer": n, "est_date": d, "owners": owners, "status": status, "closed_on": closed,
+    return {"number": n, "customer": n, "est_date": d, "owners": owners, "period": d[:7], "status": status, "closed_on": closed,
             "lines": [{"category": c, "amount": a} for c, a in lines]}
 
 class Rollforward(unittest.TestCase):
@@ -24,6 +24,11 @@ class Rollforward(unittest.TestCase):
     def test_as_on_in_past_reopens_later_closures(self):
         r = rules.build_report(self.E, {}, "2026-10", date(2026, 10, 3))["total"]
         self.assertEqual(r["converted"], 500)  # only the 3 Oct conversion had happened
+
+    def test_period_differs_from_date(self):
+        e = est("late-filed", "2026-10-08", "A"); e["period"] = "2026-09"
+        t = rules.build_report([e], {}, "2026-10", date(2026, 10, 13))["total"]
+        self.assertEqual((t["opening"], t["new"], t["closing"]), (100, 0, 100))
 
     def test_split_credit(self):
         e = [est("j", "2026-10-01", "A|B", lines=(("Annual fees", 100),))]

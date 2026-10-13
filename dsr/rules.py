@@ -63,6 +63,12 @@ def validate_estimate(d, sm_names, today, allowed_owner=None):
         c["est_date"] = ed.isoformat()
     except ValueError:
         errs.append("Estimate date is required (YYYY-MM-DD).")
+    try:
+        c["period"] = d.get("period") or c["est_date"][:7]
+        py, pm = map(int, c["period"].split("-")); assert 1 <= pm <= 12
+        if date(py, pm, 1) > today.replace(day=1): errs.append("Report month cannot be in the future.")
+    except (ValueError, AssertionError, KeyError):
+        errs.append("Report month must be YYYY-MM.")
     owners = sorted({norm_name(o) for o in d.get("owners") or [] if norm_name(o)})
     if not owners: errs.append("Pick at least one sales manager.")
     if len(owners) > 3: errs.append("At most 3 sales managers per estimate.")
@@ -106,10 +112,14 @@ def build_report(estimates, targets, month, as_on, split=False):
         keys = e["owners"].split("|") if split else [e["owners"]]
         w = 1 / len(keys) if split else 1
         events = []
-        if ed < start and (cl is None or cl >= start): events.append("opening")
-        if start <= ed <= end: events.append("new")
+        # An estimate belongs to the report month (`period`) it was booked in; that can differ from
+        # its date (e.g. raised on 8 Oct but filed under September), as in the legacy Reporting sheet.
+        per = e["period"] or e["est_date"][:7]
+        if per > month: continue
+        if per < month and (cl is None or cl >= start): events.append("opening")
+        if per == month: events.append("new")
         if cl and start <= cl <= end: events.append("converted" if e["status"] == "received" else "dropped")
-        if ed <= end and (cl is None or cl > end): events.append("closing")
+        if cl is None or cl > end: events.append("closing")
         if not events: continue
         for ev in events:
             for k in keys:
