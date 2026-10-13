@@ -152,7 +152,7 @@ async function estimates(el) {
     <label class="f">Sales manager<select id="fm">${opt(S.meta.sms, f.sm, "All")}</select></label>
     <label class="f">Fee type<select id="fc">${opt(S.meta.categories, f.category, "All")}</select></label>
     <label class="f">Age<select id="fb">${opt(S.meta.buckets, f.bucket, "All")}</select></label>
-    ${can("sales") ? `<button class="btn primary" id="new">+ New estimate</button>` : ""}</div>
+    ${can("sales") ? `<button class="btn" id="up">Upload file…</button><button class="btn primary" id="new">+ New estimate</button>` : ""}</div>
     <div class="card scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th>Status</th><th class="r">Age</th></tr></thead><tbody>
     ${rows.map(r => `<tr data-id="${r.id}" style="cursor:pointer"><td>${esc(r.number)}</td><td>${fdate(r.est_date)}</td><td>${esc(r.customer.slice(0, 38))}</td><td>${teamHtml(r.team)}</td>
       <td>${r.categories.map(c => `<span class="legend" style="display:inline-flex;margin:0 6px 0 0"><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</td>
@@ -161,6 +161,7 @@ async function estimates(el) {
   set("#fs", "status"); set("#fm", "sm"); set("#fc", "category"); set("#fb", "bucket");
   $("#fq").onkeydown = e => { if (e.key === "Enter") { f.q = e.target.value; render(); } }; $("#fq").onblur = e => { if (e.target.value !== (f.q || "")) { f.q = e.target.value; render(); } };
   if ($("#new")) $("#new").onclick = () => editor();
+  if ($("#up")) $("#up").onclick = () => uploadDialog();
   el.querySelectorAll("tr[data-id]").forEach(tr => tr.onclick = () => detail(+tr.dataset.id));
 }
 const pill = r => r.status === "pending" && r.drop_requested_by ? `<span class="pill dropreq">drop requested</span>` : `<span class="pill ${r.status}">${r.status}</span>`;
@@ -191,6 +192,31 @@ function editor(e) {
     });
 }
 
+const b64 = file => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result.split(",")[1]); r.onerror = no; r.readAsDataURL(file); });
+
+function uploadDialog() {
+  let current = null;
+  modal("Upload estimates", `<p class="help" style="margin-top:0">Upload a CSV${""} (or Excel, if the server has openpyxl) with one row per fee line: <b>Estimate Date, Estimate Number, Customer Name, Subtotal, SM, Category</b> (optional: Report Month). Use "A &amp; B" in SM for a joint deal — the first name is the primary. New estimates start as pending. <a href="/api/estimates/template.csv" download>Download template</a></p>
+    <input type="file" id="uf" accept=".csv,.xlsx,.xlsm"><div id="up-res" style="margin-top:12px"></div>`,
+    `<button class="btn" id="cx">Close</button><button class="btn primary" id="go" disabled>Import</button>`, () => {
+      $("#cx").onclick = closeModal;
+      const show = r => {
+        $("#up-res").innerHTML = `<div style="margin-bottom:8px"><b>${r.valid}</b> ready to import · <b style="color:${r.invalid ? "var(--bad)" : "inherit"}">${r.invalid}</b> with problems${r.invalid ? " (these are skipped)" : ""}</div>
+        <div class="scroll" style="max-height:300px"><table><thead><tr><th>Row</th><th>Estimate</th><th>Customer</th><th>SM</th><th class="r">Total</th><th></th></tr></thead><tbody>
+        ${r.rows.map(x => `<tr><td>${x.row}</td><td>${esc(x.number)}</td><td>${esc((x.customer || "").slice(0, 26))}</td><td>${esc(x.team)}</td><td class="r num">${inr(x.total)}</td><td style="white-space:normal">${x.ok ? '<span class="pill received">ok</span>' : `<span class="pill dropped">${esc(x.errors.join(" "))}</span>`}</td></tr>`).join("")}</tbody></table></div>`;
+      };
+      $("#uf").onchange = async e => {
+        const f = e.target.files[0]; if (!f) return; $("#go").disabled = true;
+        try { current = { filename: f.name, content: await b64(f) }; const r = await api("estimates/upload", { method: "POST", body: current }); show(r); $("#go").disabled = !r.valid; $("#go").textContent = `Import ${r.valid} estimate${r.valid === 1 ? "" : "s"}`; }
+        catch (er) { $("#up-res").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
+      };
+      $("#go").onclick = async () => {
+        try { const r = await api("estimates/upload", { method: "POST", body: { ...current, commit: true } }); closeModal(); toast(`Imported ${r.imported} estimate${r.imported === 1 ? "" : "s"}`); render(); }
+        catch (er) { $("#up-res").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
+      };
+    });
+}
+
 async function detail(id) {
   const e = await api("estimates/" + id), mineOrAdmin = S.me.role === "admin" || (S.me.sm_name && e.owners.split("|").includes(S.me.sm_name));
   const btns = [];
@@ -207,10 +233,12 @@ async function detail(id) {
   if (e.status === "dropped") kv.push(["Dropped on", fdate(e.closed_on) + (e.closed_approx ? " (approx.)" : "")], ["Reason", esc(e.drop_reason || "—")]);
   if (e.drop_requested_by && e.status === "pending") kv.push(["Drop requested", `by ${esc(e.drop_requested_by)} on ${fdate(e.drop_requested_on)}: “${esc(e.drop_reason)}”`]);
   if (e.notes) kv.push(["Notes", esc(e.notes)]);
+  kv.push(["Documents", (e.files.map(f => `<a href="/api/estimates/${e.id}/files/${f.id}">${esc(f.name)}</a> <span class="muted">${Math.round(f.size / 1024)} KB · ${esc(f.uploaded_by)}</span>`).join("<br>") || '<span class="muted">none</span>') + (can("sales") && mineOrAdmin || can("finance") ? `<br><label class="btn sm" style="display:inline-block;margin-top:6px;cursor:pointer">Attach estimate PDF/image<input type="file" id="att" accept=".pdf,.png,.jpg,.jpeg" hidden></label>` : "")]);
   modal(`${esc(e.number)} ${pill(e)}`, `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     <h3 style="font-size:13px;margin-top:14px">History</h3><ul class="log">${e.audit.map(a => `<li><b>${esc(a.action)}</b> · ${esc(a.user)} · ${esc(a.at.replace("T", " "))}${a.detail ? `<br>${esc(a.detail)}` : ""}</li>`).join("")}</ul>`, btns.join(""), () => {
     const on = (id, fn) => $(id) && ($(id).onclick = fn);
     on("#a-edit", () => editor(e));
+    if ($("#att")) $("#att").onchange = async ev => { const f = ev.target.files[0]; if (!f) return; try { await api(`estimates/${e.id}/files`, { method: "POST", body: { filename: f.name, content: await b64(f) } }); toast("Attached"); detail(e.id); } catch (er) { toast(er.message); } };
     on("#a-rec", () => payForm(e)); on("#a-app", () => reasonForm(e, "drop-decision", "Approve drop", { decision: "approve" }, e.drop_reason));
     on("#a-rej", () => reasonForm(e, "drop-decision", "Reject drop request", { decision: "reject" }, "", true));
     on("#a-drop", () => reasonForm(e, "drop-decision", "Drop estimate", { decision: "approve" }));
@@ -293,14 +321,23 @@ async function rulesTab(el) {
 
 /* ---------- admin ---------- */
 async function admin(el) {
-  const [users, sms] = await Promise.all([api("users"), api("sms")]);
+  const [users, sms, keys, hook] = await Promise.all([api("users"), api("sms"), api("keys"), api("webhook")]);
   el.innerHTML = `<div class="bar"><h2>Admin</h2></div><div class="grid g2">
   <div class="card"><h3>Users</h3><div class="hint">Sales users are linked to one sales manager.</div><div class="scroll"><table><thead><tr><th>User</th><th>Role</th><th>Linked SM</th><th></th></tr></thead><tbody>
     ${users.map(u => `<tr><td>${esc(u.name)} <span class="muted">${esc(u.username)}</span></td><td>${u.role}</td><td>${esc(u.sm_name || "")}</td><td>${u.active ? "" : '<span class="pill dropped">inactive</span> '}<button class="btn sm" data-u="${u.id}">Edit</button></td></tr>`).join("")}</tbody></table></div>
     <button class="btn primary" id="nu" style="margin-top:12px">+ Add user</button></div>
   <div class="card"><h3>Sales managers</h3><div class="hint">Deactivate someone who has left: history is kept, but they can't be picked on new estimates.</div>
     <table><tbody>${sms.map(s => `<tr><td>${esc(s.name)}</td><td class="r"><button class="btn sm" data-sm="${esc(s.name)}" data-on="${s.active ? 0 : 1}">${s.active ? "Deactivate" : "Reactivate"}</button></td></tr>`).join("")}</tbody></table>
-    <form id="asm" class="bar" style="margin:12px 0 0"><label class="f">New sales manager<input name="n" required></label><button class="btn">Add</button></form></div></div>`;
+    <form id="asm" class="bar" style="margin:12px 0 0"><label class="f">New sales manager<input name="n" required></label><button class="btn">Add</button></form></div>
+  <div class="card"><h3>API access (CRM / other systems)</h3><div class="hint">Each system gets its own key. <b>read</b>: reports and estimates · <b>sales</b>: also create/edit estimates and upload · <b>finance</b>: also record payments and drops. See docs/API.md.</div>
+    <table><tbody>${keys.map(k => `<tr><td>${esc(k.name)} <span class="muted">${esc(k.prefix)}…</span></td><td>${k.role}</td><td class="muted">${k.last_used ? "used " + esc(k.last_used.slice(0, 10)) : "never used"}</td><td class="r"><button class="btn sm" data-key="${k.id}" data-on="${k.active ? 0 : 1}">${k.active ? "Revoke" : "Restore"}</button></td></tr>`).join("") || '<tr><td class="muted">No keys yet.</td></tr>'}</tbody></table>
+    <form id="ak" class="bar" style="margin:12px 0 0"><label class="f">System name<input name="n" required placeholder="CRM"></label><label class="f">Role<select name="r"><option>read</option><option selected>sales</option><option>finance</option></select></label><button class="btn">Create key</button></form></div>
+  <div class="card"><h3>Webhook</h3><div class="hint">We POST estimate events (created, updated, drop_requested, received, dropped, reopened) to this URL, signed with HMAC-SHA256 in <code>X-DSR-Signature</code>.</div>
+    <form id="wh" class="form"><label class="full">URL (https)<input name="u" value="${esc(hook.url)}" placeholder="https://crm.example.com/hooks/dsr"></label><label class="full">Signing secret ${hook.has_secret ? "(set — leave blank to keep)" : ""}<input name="s" type="password" autocomplete="new-password"></label><div class="full"><button class="btn primary">Save webhook</button></div></form></div></div>`;
+  $("#ak").onsubmit = async e => { e.preventDefault(); try { const r = await api("keys", { method: "POST", body: { name: e.target.n.value, role: e.target.r.value } });
+    modal("API key created", `<p>Copy this now — it is shown only once.</p><input readonly style="width:100%" value="${esc(r.token)}" onfocus="this.select()">`, `<button class="btn primary" id="cx">Done</button>`, () => $("#cx").onclick = () => { closeModal(); render(); }); } catch (er) { toast(er.message); } };
+  el.querySelectorAll("[data-key]").forEach(b => b.onclick = async () => { await api("keys", { method: "PUT", body: { id: +b.dataset.key, active: b.dataset.on === "1" } }); render(); });
+  $("#wh").onsubmit = async e => { e.preventDefault(); try { await api("webhook", { method: "PUT", body: { url: e.target.u.value, secret: e.target.s.value } }); toast("Webhook saved"); } catch (er) { toast(er.message); } };
   $("#asm").onsubmit = async e => { e.preventDefault(); try { await api("sms", { method: "POST", body: { name: e.target.n.value } }); S.meta = await api("meta"); render(); } catch (er) { toast(er.message); } };
   el.querySelectorAll("[data-sm]").forEach(b => b.onclick = async () => { await api("sms", { method: "POST", body: { name: b.dataset.sm, active: b.dataset.on === "1" } }); S.meta = await api("meta"); render(); });
   const userForm = u => modal(u ? "Edit user" : "Add user", `<form class="form" id="uf">

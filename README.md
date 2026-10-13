@@ -32,5 +32,8 @@ fee lines (Annual / Set-up / Integration / Customisation); no future dates; invo
 closed estimates locked; every change audited; optimistic locking on edits.
 **Closing = Opening + New − Converted − Dropped**, computed from each estimate's report month and close date, so any month / as-on date works.
 
+## Integrations
+Bulk upload (CSV/Excel) and PDF attachments are in the Estimates tab. Other systems (e.g. a CRM) use API keys + an optional webhook: see [docs/API.md](docs/API.md).
+
 ## Layout
 `dsr/` server, rules, importer · `web/` UI · `tests/` rule tests.

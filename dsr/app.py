@@ -5,7 +5,9 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import db, rules
+import base64, hashlib, hmac, urllib.request
+import mimetypes
+from . import db, rules, uploads
 
 WEB = os.path.join(os.path.dirname(__file__), "..", "web")
 LOCK = threading.Lock()
@@ -27,7 +29,7 @@ def need(user, *roles):
 
 
 def is_owner(user, est):
-    return user["role"] == "admin" or (user["sm_name"] and user["sm_name"] in est["owners"].split("|"))
+    return user["role"] == "admin" or user.get("api") or (user["sm_name"] and user["sm_name"] in est["owners"].split("|"))
 
 
 class H(BaseHTTPRequestHandler):
@@ -47,11 +49,41 @@ class H(BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(data)
 
     def user_for(self, c):
+        auth = self.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            h = hashlib.sha256(auth[7:].strip().encode()).hexdigest()
+            k = c.execute("SELECT * FROM api_keys WHERE key_hash=? AND active=1", (h,)).fetchone()
+            if not k: return None
+            c.execute("UPDATE api_keys SET last_used=? WHERE id=?", (db.now(), k["id"]))
+            return {"id": -k["id"], "username": "api", "name": "API: " + k["name"], "role": k["role"], "sm_name": None, "api": True}
         ck = SimpleCookie(self.headers.get("Cookie", ""))
         if "sid" not in ck: return None
         r = c.execute("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1",
                       (ck["sid"].value, db.now())).fetchone()
         return dict(r) if r else None
+
+    def emit(self, event, est_id, c):
+        self._events = getattr(self, "_events", [])
+        self._events.append((event, est_id))
+
+    def fire_webhooks(self):
+        c = db.connect()
+        try:
+            cfg = {r["k"]: r["v"] for r in c.execute("SELECT k,v FROM settings WHERE k IN('webhook_url','webhook_secret')")}
+            if not cfg.get("webhook_url"): return
+            for ev, eid in self._events:
+                rows = db.load_estimates(c, "WHERE id=?", (eid,))
+                if not rows: continue
+                e = rows[0]; payload = json.dumps({"event": ev, "at": db.now(), "estimate": {k: e[k] for k in
+                    ("id", "number", "customer", "est_date", "period", "owners", "status", "closed_on", "invoice_no", "external_ref", "total", "lines")}}, default=str).encode()
+                sig = hmac.new(cfg.get("webhook_secret", "").encode(), payload, hashlib.sha256).hexdigest()
+                threading.Thread(target=self._post_hook, args=(cfg["webhook_url"], payload, sig), daemon=True).start()
+        finally: c.close()
+
+    @staticmethod
+    def _post_hook(url, payload, sig):
+        try: urllib.request.urlopen(urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json", "X-DSR-Signature": "sha256=" + sig}), timeout=8).read()
+        except Exception as ex: print("webhook failed:", url, ex)
 
     def handle_any(self, method):
         u = urlparse(self.path); q = {k: v[0] for k, v in parse_qs(u.query).items()}
@@ -77,6 +109,7 @@ class H(BaseHTTPRequestHandler):
                         res = self.route(c, method, u.path, q, body, user)
                     c.commit()
                 finally: c.close()
+            if getattr(self, "_events", None): self.fire_webhooks()
         except Err as e: return self.send(e.code, {"error": e.msg, **e.extra})
         if isinstance(res, tuple): return self.send(200, res[0], res[1], res[2] if len(res) > 2 else ())
         self.send(200, res)
@@ -105,9 +138,13 @@ class H(BaseHTTPRequestHandler):
             return {"today": today().isoformat(), "categories": rules.CATEGORIES, "buckets": rules.BUCKETS,
                     "sms": [r["name"] for r in c.execute("SELECT name FROM sms WHERE active=1 ORDER BY name")]}
         if P == ["report"]: return self.report(c, q)
+        if P == ["estimates", "template.csv"]: return uploads.TEMPLATE, "text/csv", [("Content-Disposition", 'attachment; filename="estimate-upload-template.csv"')]
+        if P == ["estimates", "upload"] and m == "POST": return self.bulk_upload(c, b, user)
         if P == ["estimates"]:
             if m == "GET": return self.list_estimates(c, q)
             if m == "POST": return self.create(c, b, user)
+        if P[0] == "estimates" and len(P) >= 3 and P[1].isdigit() and P[2] == "files":
+            return self.files(c, m, int(P[1]), P[3:], b, user)
         if P[0] == "estimates" and len(P) >= 2 and P[1].isdigit():
             return self.estimate_action(c, m, int(P[1]), P[2] if len(P) > 2 else "", b, user)
         if P == ["targets"]:
@@ -115,7 +152,7 @@ class H(BaseHTTPRequestHandler):
             if m == "PUT": return self.set_target(c, b, user)
         if P[0] == "snapshots": return self.snapshots(c, m, P, b, user)
         if P == ["export.csv"]: return self.export(c, q)
-        if P[0] in ("users", "sms"): return self.admin(c, m, P, b, user)
+        if P[0] in ("users", "sms", "keys", "webhook"): return self.admin(c, m, P, b, user)
         raise Err(404, "No such endpoint.")
 
     # ---- reports
@@ -184,11 +221,62 @@ class H(BaseHTTPRequestHandler):
         db.log(c, None, user["name"], "target", f'{b["month"]}: {b.get("target_count")} / {b.get("target_amount")}')
         return {"ok": True}
 
+    # ---- bulk upload + attachments
+    def bulk_upload(self, c, b, user):
+        need(user, "sales")
+        try:
+            data = base64.b64decode(b.get("content") or "", validate=True)
+            if not data or len(data) > uploads.MAX_BYTES: raise ValueError("File is empty or larger than 10 MB.")
+            existing = {r[0] for r in c.execute("SELECT number FROM estimates")}
+            res = uploads.parse(str(b.get("filename") or "upload.csv"), data, self.sm_names(c), today(),
+                                user["sm_name"] if user["role"] == "sales" else None, existing)
+        except ValueError as e: raise Err(422, str(e))
+        good = [r for r in res if r["ok"]]
+        if b.get("commit"):
+            for r in good:
+                cl = r["clean"]
+                cur = c.execute("INSERT INTO estimates(number,est_date,period,customer,owners,notes,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                                (cl["number"], cl["est_date"], cl["period"], cl["customer"], cl["owners"], "", user["name"], db.now(), db.now()))
+                db.save_lines(c, cur.lastrowid, cl["lines"]); db.log(c, cur.lastrowid, user["name"], "created", f'bulk upload {b.get("filename")}')
+        for r in res: r.pop("clean")
+        return {"committed": bool(b.get("commit")), "imported": len(good) if b.get("commit") else 0, "valid": len(good), "invalid": len(res) - len(good), "rows": res}
+
+    def files(self, c, m, eid, rest, b, user):
+        e = db.load_estimates(c, "WHERE id=?", (eid,))
+        if not e: raise Err(404, "Estimate not found.")
+        e = e[0]
+        if m == "GET" and not rest: return [dict(r) for r in c.execute("SELECT id,name,size,uploaded_by,uploaded_at FROM files WHERE estimate_id=? ORDER BY id", (eid,))]
+        if m == "GET":
+            r = c.execute("SELECT * FROM files WHERE estimate_id=? AND id=?", (eid, rest[0])).fetchone()
+            path = r and os.path.join(db.FILES_DIR, r["stored"])
+            if not r or not os.path.isfile(path): raise Err(404, "File not found.")
+            return open(path, "rb").read(), r["mime"], [("Content-Disposition", 'attachment; filename="%s"' % re.sub(r'[^\w.\- ]', "_", r["name"]))]
+        if m == "POST":
+            if user["role"] == "sales" and not is_owner(user, e): raise Err(403, "Only the estimate's sales manager can attach files.")
+            name = os.path.basename(str(b.get("filename") or "")).strip()
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in (".pdf", ".png", ".jpg", ".jpeg"): raise Err(422, "Attach a PDF, PNG or JPG.")
+            try: data = base64.b64decode(b.get("content") or "", validate=True)
+            except ValueError: raise Err(422, "Bad file data.")
+            if not data or len(data) > uploads.MAX_BYTES: raise Err(422, "File is empty or larger than 10 MB.")
+            os.makedirs(db.FILES_DIR, exist_ok=True)
+            stored = f"{eid}-{secrets.token_hex(8)}{ext}"
+            open(os.path.join(db.FILES_DIR, stored), "wb").write(data)
+            c.execute("INSERT INTO files(estimate_id,name,stored,mime,size,uploaded_by,uploaded_at) VALUES(?,?,?,?,?,?,?)",
+                      (eid, name, stored, uploads.FILE_TYPES[ext], len(data), user["name"], db.now()))
+            db.log(c, eid, user["name"], "file attached", name)
+            return {"ok": True}
+        raise Err(405, "Not allowed.")
+
     # ---- estimates
     def sm_names(self, c): return {r[0] for r in c.execute("SELECT name FROM sms WHERE active=1")}
 
     def create(self, c, b, user):
         need(user, "sales")
+        ref = str(b.get("external_ref") or "").strip()[:100] or None
+        if ref:   # idempotent for integrations: replaying the same CRM record returns the same estimate
+            old = c.execute("SELECT id FROM estimates WHERE external_ref=?", (ref,)).fetchone()
+            if old: return {"id": old[0], "existing": True}
         clean, errs = rules.validate_estimate(b, self.sm_names(c), today(), user["sm_name"] if user["role"] == "sales" else None)
         if not errs and c.execute("SELECT 1 FROM estimates WHERE number=?", (clean["number"],)).fetchone():
             errs.append(f'Estimate {clean["number"]} already exists.')
@@ -197,6 +285,8 @@ class H(BaseHTTPRequestHandler):
                         (clean["number"], clean["est_date"], clean["period"], clean["customer"], clean["owners"], clean["notes"], user["name"], db.now(), db.now()))
         db.save_lines(c, cur.lastrowid, clean["lines"])
         db.log(c, cur.lastrowid, user["name"], "created", f'{sum(l["amount"] for l in clean["lines"]):g}')
+        if ref: c.execute("UPDATE estimates SET external_ref=? WHERE id=?", (ref, cur.lastrowid))
+        self.emit("estimate.created", cur.lastrowid, c)
         return {"id": cur.lastrowid}
 
     def estimate_action(self, c, m, eid, act, b, user):
@@ -206,6 +296,7 @@ class H(BaseHTTPRequestHandler):
         if m == "GET":
             e["audit"] = [dict(r) for r in c.execute("SELECT at,user,action,detail FROM audit WHERE estimate_id=? ORDER BY id DESC", (eid,))]
             e["age"] = (today() - date.fromisoformat(e["est_date"])).days if e["status"] == "pending" else None
+            e["files"] = [dict(r) for r in c.execute("SELECT id,name,size,uploaded_by FROM files WHERE estimate_id=? ORDER BY id", (eid,))]
             return e
         if b.get("version") != e["version"]:
             raise Err(409, "Someone else changed this estimate. Reload and try again.")
@@ -263,10 +354,30 @@ class H(BaseHTTPRequestHandler):
             bump(status="pending", closed_on=None, closed_approx=0, invoice_no=None, invoice_date=None, payment_ref=None,
                  drop_requested_by=None, drop_requested_on=None, drop_reason=None); db.log(c, eid, who, "reopened", reason)
         else: raise Err(404, "No such action.")
+        ev = {"receive": "estimate.received", "drop-decision": "estimate.dropped" if b.get("decision") == "approve" else None,
+              "reopen": "estimate.reopened", "": "estimate.updated", "drop-request": "estimate.drop_requested"}.get(act)
+        if ev: self.emit(ev, eid, c)
         return {"ok": True, "version": e["version"] + 1}
 
     # ---- admin
     def admin(self, c, m, P, b, user):
+        if P[0] in ("keys", "webhook") and user["role"] != "admin": raise Err(403, "Admins only.")
+        if P[0] == "keys":
+            if m == "GET": return [dict(r) for r in c.execute("SELECT id,name,prefix,role,active,created_at,last_used FROM api_keys ORDER BY id")]
+            if m == "POST":
+                name = rules.norm_name(b.get("name"))
+                if not name or b.get("role") not in ("read", "sales", "finance"): raise Err(422, "Give the key a name and a role (read, sales or finance).")
+                tok = "dsr_" + secrets.token_urlsafe(32)
+                c.execute("INSERT INTO api_keys(name,key_hash,prefix,role,created_at) VALUES(?,?,?,?,?)", (name, hashlib.sha256(tok.encode()).hexdigest(), tok[:8], b["role"], db.now()))
+                return {"token": tok, "note": "Shown once. Store it in the CRM's secret store."}
+            c.execute("UPDATE api_keys SET active=? WHERE id=?", (0 if b.get("active") is False else 1, b.get("id"))); return {"ok": True}
+        if P[0] == "webhook":
+            if m == "PUT":
+                url = str(b.get("url") or "").strip()
+                if url and not re.match(r"https://|http://(localhost|127\.0\.0\.1)", url): raise Err(422, "Webhook URL must be https (http only for localhost).")
+                c.execute("INSERT OR REPLACE INTO settings VALUES('webhook_url',?)", (url,))
+                if b.get("secret"): c.execute("INSERT OR REPLACE INTO settings VALUES('webhook_secret',?)", (b["secret"],))
+            return {"url": (c.execute("SELECT v FROM settings WHERE k='webhook_url'").fetchone() or [""])[0], "has_secret": bool(c.execute("SELECT 1 FROM settings WHERE k='webhook_secret'").fetchone())}
         if user["role"] != "admin":
             if P[0] == "users" and m == "GET": raise Err(403, "Admins only.")
             if P[0] == "sms" and m == "GET": return [dict(r) for r in c.execute("SELECT * FROM sms ORDER BY name")]

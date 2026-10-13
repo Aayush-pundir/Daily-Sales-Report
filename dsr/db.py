@@ -17,11 +17,18 @@ CREATE TABLE IF NOT EXISTS lines(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, estimate_id INTEGER, at TEXT, user TEXT, action TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS targets(month TEXT PRIMARY KEY, target_count INTEGER, target_amount REAL, legacy_actual INTEGER);
 CREATE TABLE IF NOT EXISTS snapshots(day TEXT PRIMARY KEY, published_by TEXT, at TEXT, data TEXT);
+CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL, name TEXT, stored TEXT, mime TEXT, size INTEGER, uploaded_by TEXT, uploaded_at TEXT);
+CREATE TABLE IF NOT EXISTS api_keys(id INTEGER PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, prefix TEXT, role TEXT NOT NULL CHECK(role IN('read','sales','finance')),
+  active INTEGER DEFAULT 1, created_at TEXT, last_used TEXT);
+CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
 CREATE INDEX IF NOT EXISTS ix_lines_est ON lines(estimate_id);
 CREATE INDEX IF NOT EXISTS ix_audit_est ON audit(estimate_id);
 """
 
 DB_PATH = os.environ.get("DSR_DB", os.path.join(os.path.dirname(__file__), "..", "data", "dsr.sqlite3"))
+
+
+FILES_DIR = os.path.join(os.path.dirname(DB_PATH), "files")
 
 
 def connect(path=None):
@@ -32,6 +39,9 @@ def connect(path=None):
     if "period" not in [r[1] for r in c.execute("PRAGMA table_info(estimates)")]:
         c.execute("ALTER TABLE estimates ADD COLUMN period TEXT")
         c.execute("UPDATE estimates SET period=substr(est_date,1,7)")
+    if "external_ref" not in [r[1] for r in c.execute("PRAGMA table_info(estimates)")]:
+        c.execute("ALTER TABLE estimates ADD COLUMN external_ref TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_ext ON estimates(external_ref) WHERE external_ref IS NOT NULL")
     return c
 
 

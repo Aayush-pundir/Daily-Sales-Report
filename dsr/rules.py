@@ -67,7 +67,9 @@ def validate_estimate(d, sm_names, today, allowed_owner=None):
         c["period"] = d.get("period") or c["est_date"][:7]
         py, pm = map(int, c["period"].split("-")); assert 1 <= pm <= 12
         if date(py, pm, 1) > today.replace(day=1): errs.append("Report month cannot be in the future.")
-    except (ValueError, AssertionError, KeyError):
+    except KeyError:
+        pass  # no valid estimate date; already reported
+    except (ValueError, AssertionError):
         errs.append("Report month must be YYYY-MM.")
     owners = list(dict.fromkeys(norm_name(o) for o in d.get("owners") or [] if norm_name(o)))  # first = primary
     if not owners: errs.append("Pick at least one sales manager.")
