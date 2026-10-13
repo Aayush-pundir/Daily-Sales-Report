@@ -147,9 +147,6 @@ class H(BaseHTTPRequestHandler):
             return self.files(c, m, int(P[1]), P[3:], b, user)
         if P[0] == "estimates" and len(P) >= 2 and P[1].isdigit():
             return self.estimate_action(c, m, int(P[1]), P[2] if len(P) > 2 else "", b, user)
-        if P == ["targets"]:
-            if m == "GET": return [dict(r) for r in c.execute("SELECT * FROM targets ORDER BY month")]
-            if m == "PUT": return self.set_target(c, b, user)
         if P[0] == "snapshots": return self.snapshots(c, m, P, b, user)
         if P == ["export.csv"]: return self.export(c, q)
         if P[0] in ("users", "sms", "keys", "webhook"): return self.admin(c, m, P, b, user)
@@ -160,10 +157,8 @@ class H(BaseHTTPRequestHandler):
         ym = q.get("month") or today().strftime("%Y-%m")
         if not re.fullmatch(r"\d{4}-\d{2}", ym): raise Err(400, "month must be YYYY-MM")
         as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
-        tg = {r["month"]: dict(r) for r in c.execute("SELECT * FROM targets")}
-        r = rules.build_report(db.load_estimates(c), tg, ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
+        r = rules.build_report(db.load_estimates(c), ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
-        r["target"] = tg.get(ym)
         s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
         r["last_published"] = dict(s) if s else None
         return r
@@ -205,21 +200,6 @@ class H(BaseHTTPRequestHandler):
         rep = self.report(c, {"month": d[:7], "as_on": d})
         c.execute("INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?)", (d, user["name"], db.now(), json.dumps(rep, default=str)))
         return {"ok": True, "day": d}
-
-    def set_target(self, c, b, user):
-        need(user, "finance")
-        if not re.fullmatch(r"\d{4}-\d{2}", str(b.get("month", ""))): raise Err(400, "month must be YYYY-MM")
-        def num(k, cast):
-            v = b.get(k)
-            if v in (None, ""): return None
-            try: v = cast(v)
-            except ValueError: raise Err(400, f"{k} must be a number")
-            if v < 0: raise Err(400, f"{k} cannot be negative")
-            return v
-        old = c.execute("SELECT legacy_actual FROM targets WHERE month=?", (b["month"],)).fetchone()
-        c.execute("INSERT OR REPLACE INTO targets VALUES(?,?,?,?)", (b["month"], num("target_count", int), num("target_amount", float), old[0] if old else None))
-        db.log(c, None, user["name"], "target", f'{b["month"]}: {b.get("target_count")} / {b.get("target_amount")}')
-        return {"ok": True}
 
     # ---- bulk upload + attachments
     def bulk_upload(self, c, b, user):

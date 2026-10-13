@@ -1,7 +1,7 @@
 # Daily Sales Report
 
 A small web dashboard that replaces the daily "Revenue" Excel + email. **Sales** enter estimates, **Finance** records
-receipts/drops and targets, and everyone sees the same live roll-forward, ageing and sales-manager matrix.
+receipts and drops, and everyone sees the same live roll-forward, ageing and sales-manager matrix.
 No dependencies to run (Python 3.10+ standard library, SQLite, vanilla JS). `openpyxl` is only needed for the one-time import.
 
 ## Run
@@ -23,7 +23,7 @@ Data lives in `data/dsr.sqlite3` (git-ignored; back it up). Put it behind HTTPS 
 | Propose a drop (reason required) | own only | – | – |
 | Record payment + tax invoice | – | ✔ | ✔ |
 | Approve/reject/make a drop | – | ✔ | ✔ |
-| Monthly targets, publish daily report | – | ✔ | ✔ |
+| Publish the daily report | – | ✔ | ✔ |
 | Reopen closed estimate, users, SM list | – | – | ✔ |
 
 ## Rules

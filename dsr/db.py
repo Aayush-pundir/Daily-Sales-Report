@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS estimates(id INTEGER PRIMARY KEY, number TEXT UNIQUE 
 CREATE TABLE IF NOT EXISTS lines(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
   category TEXT NOT NULL, amount REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, estimate_id INTEGER, at TEXT, user TEXT, action TEXT, detail TEXT);
-CREATE TABLE IF NOT EXISTS targets(month TEXT PRIMARY KEY, target_count INTEGER, target_amount REAL, legacy_actual INTEGER);
 CREATE TABLE IF NOT EXISTS snapshots(day TEXT PRIMARY KEY, published_by TEXT, at TEXT, data TEXT);
 CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL, name TEXT, stored TEXT, mime TEXT, size INTEGER, uploaded_by TEXT, uploaded_at TEXT);
 CREATE TABLE IF NOT EXISTS api_keys(id INTEGER PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, prefix TEXT, role TEXT NOT NULL CHECK(role IN('read','sales','finance')),

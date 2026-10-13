@@ -17,29 +17,29 @@ class Rollforward(unittest.TestCase):
                   est("future-close", "2026-10-02", "B", "received", "2026-10-20")]
 
     def test_identity(self):
-        r = rules.build_report(self.E, {}, "2026-10", date(2026, 10, 13))["total"]
+        r = rules.build_report(self.E, "2026-10", date(2026, 10, 13))["total"]
         self.assertEqual((r["opening"], r["new"], r["converted"], r["dropped"], r["closing"]), (1700, 450, 550, 200, 1400))
         self.assertEqual(r["opening"] + r["new"] - r["converted"] - r["dropped"], r["closing"])
 
     def test_as_on_in_past_reopens_later_closures(self):
-        r = rules.build_report(self.E, {}, "2026-10", date(2026, 10, 3))["total"]
+        r = rules.build_report(self.E, "2026-10", date(2026, 10, 3))["total"]
         self.assertEqual(r["converted"], 500)  # only the 3 Oct conversion had happened
 
     def test_period_differs_from_date(self):
         e = est("late-filed", "2026-10-08", "A"); e["period"] = "2026-09"
-        t = rules.build_report([e], {}, "2026-10", date(2026, 10, 13))["total"]
+        t = rules.build_report([e], "2026-10", date(2026, 10, 13))["total"]
         self.assertEqual((t["opening"], t["new"], t["closing"]), (100, 0, 100))
 
     def test_split_credit(self):
         e = [est("j", "2026-10-01", "A|B", lines=(("Annual fees", 100),))]
-        r = rules.build_report(e, {}, "2026-10", date(2026, 10, 13), credit="split")
+        r = rules.build_report(e, "2026-10", date(2026, 10, 13), credit="split")
         self.assertEqual({t["team"]: t["new"] for t in r["teams"]}, {"A": 50, "B": 50})
 
     def test_primary_order_is_kept(self):
         e = [est("1", "2026-10-01", "A|B"), est("2", "2026-10-01", "B|A")]
-        r = rules.build_report(e, {}, "2026-10", date(2026, 10, 13))
+        r = rules.build_report(e, "2026-10", date(2026, 10, 13))
         self.assertEqual(sorted(t["team"] for t in r["teams"]), ["A & B", "B & A"])
-        p = rules.build_report(e, {}, "2026-10", date(2026, 10, 13), credit="primary")
+        p = rules.build_report(e, "2026-10", date(2026, 10, 13), credit="primary")
         self.assertEqual({t["team"]: t["new"] for t in p["teams"]}, {"A": 100, "B": 100})
 
     def test_buckets(self):

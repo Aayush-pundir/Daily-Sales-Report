@@ -94,7 +94,7 @@ def validate_estimate(d, sm_names, today, allowed_owner=None):
     return c, errs
 
 
-def build_report(estimates, targets, month, as_on, credit="team"):
+def build_report(estimates, month, as_on, credit="team"):
     """estimates: dicts with number, est_date, owners, status, closed_on, lines[{category, amount}].
     Roll-forward per workbook: Opening + New - Converted - Dropped = Closing (pending)."""
     start, mend = month_bounds(month)
@@ -138,25 +138,21 @@ def build_report(estimates, targets, month, as_on, credit="team"):
             top_pending.append({"number": e["number"], "customer": e["customer"], "owners": e["owners"],
                                 "amount": amount, "age": (end - ed).days, "bucket": b})
     top_pending.sort(key=lambda r: -r["age"] * 0 - r["amount"])
-    # Monthly conversions (count) vs target: 7 months ending at the selected one.
+    # Conversions per month (count + value): from the first month with a conversion up to the selected month, max 7.
     first_conv = min((parse_date(e["closed_on"]) for e in estimates if e["status"] == "received" and e["closed_on"]), default=None)
-    trend, y, m = [], start.year, start.month
-    months = []
-    for i in range(6, -1, -1):
-        mm = m - i; yy = y
-        while mm < 1: mm += 12; yy -= 1
-        months.append(f"{yy:04d}-{mm:02d}")
+    months, y, m = [], start.year, start.month
+    for _ in range(7):
+        months.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m < 1: m, y = 12, y - 1
+    months.reverse()
+    if first_conv: months = [x for x in months if x >= first_conv.strftime("%Y-%m")] or months[-1:]
+    else: months = months[-1:]
+    trend = []
     for ym in months:
-        s, e_ = month_bounds(ym)
-        n = sum(1 for e in estimates if e["status"] == "received" and e["closed_on"] and s <= parse_date(e["closed_on"]) <= e_)
-        amt = sum(sum(l["amount"] for l in e["lines"]) for e in estimates
-                  if e["status"] == "received" and e["closed_on"] and s <= parse_date(e["closed_on"]) <= e_)
-        t = targets.get(ym, {})
-        legacy = t.get("legacy_actual")
-        no_data = n == 0 and legacy is None and (first_conv is None or e_ < first_conv.replace(day=1))
-        trend.append({"month": ym, "actual": None if no_data else (n if (n or legacy is None) else legacy), "actual_amount": amt,
-                      "target": t.get("target_count"), "target_amount": t.get("target_amount"),
-                      "from_legacy": bool(legacy is not None and not n)})
+        s_, e_ = month_bounds(ym)
+        hit = [e for e in estimates if e["status"] == "received" and e["closed_on"] and s_ <= parse_date(e["closed_on"]) <= e_]
+        trend.append({"month": ym, "actual": len(hit), "actual_amount": sum(sum(l["amount"] for l in e["lines"]) for e in hit)})
     rows = [{"team": team_label(k) if credit == "team" else k, **v} for k, v in teams.items()]
     rows.sort(key=lambda r: -r["closing"])
     return {"month": month, "as_on": end.isoformat(), "credit": credit, "total": total, "teams": rows,
