@@ -10,6 +10,9 @@ from datetime import date, timedelta
 CATEGORIES = ["Annual fees", "Set-up fees", "Integration", "Customisation"]
 BUCKETS = ["0-30", "31-60", "61-90", "90+"]
 STATUSES = ("pending", "received", "dropped")
+FOLLOWUP_KINDS = ["Call", "Email", "WhatsApp", "Meeting", "Other"]
+TRACK_AFTER_DAYS = 30        # pending estimates older than this are tracked on the follow-up board
+FOLLOWUP_EVERY_DAYS = 7      # with no "next follow-up" date set, a follow-up is due this many days after the last one
 
 _CAT_ALIASES = {"annual fees": "Annual fees", "set-up fees": "Set-up fees", "setup fees": "Set-up fees",
                 "set up fees": "Set-up fees", "integration": "Integration", "customisation": "Customisation",
@@ -44,6 +47,40 @@ def month_bounds(ym):
     start = date(y, m, 1)
     nxt = date(y + (m == 12), m % 12 + 1, 1)
     return start, nxt - timedelta(days=1)
+
+
+def followup_flag(age, followups, today):
+    """none = never followed up, overdue = the promised next date has passed (or the last one is over a week old
+    with no next date), ok = otherwise."""
+    if not followups: return "none"
+    last = max(f["on_date"] for f in followups)
+    latest_next = next((f["next_date"] for f in sorted(followups, key=lambda f: (f["on_date"], f["id"]), reverse=True)), None)
+    if latest_next: return "overdue" if latest_next < today.isoformat() else "ok"
+    return "overdue" if (today - date.fromisoformat(last)).days > FOLLOWUP_EVERY_DAYS else "ok"
+
+
+def validate_followup(d, est_date, today):
+    errs, c = [], {}
+    try:
+        on = date.fromisoformat(d.get("on_date") or today.isoformat())
+        if on > today: errs.append("Follow-up date can't be in the future.")
+        if on < date.fromisoformat(est_date): errs.append("Follow-up can't be before the estimate date.")
+        c["on_date"] = on.isoformat()
+    except ValueError: errs.append("Follow-up date is required.")
+    c["kind"] = d.get("kind") if d.get("kind") in FOLLOWUP_KINDS else None
+    if not c["kind"]: errs.append("Pick how you followed up (call, email, ...).")
+    c["note"] = (d.get("note") or "").strip()[:1000]
+    if len(c["note"]) < 5: errs.append("Write what was discussed (min 5 characters).")
+    c["contact"] = norm_name(d.get("contact"))[:120]
+    nd = d.get("next_date")
+    if nd:
+        try:
+            n = date.fromisoformat(nd)
+            if "on_date" in c and n < date.fromisoformat(c["on_date"]): errs.append("Next follow-up can't be before this one.")
+            c["next_date"] = n.isoformat()
+        except ValueError: errs.append("Next follow-up date is not a valid date.")
+    c.setdefault("next_date", None)
+    return c, errs
 
 
 def team_label(owners):

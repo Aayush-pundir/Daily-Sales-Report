@@ -45,6 +45,25 @@ class Rollforward(unittest.TestCase):
     def test_buckets(self):
         self.assertEqual([rules.bucket(n) for n in (0, 30, 31, 60, 61, 90, 91)], ["0-30", "0-30", "31-60", "31-60", "61-90", "61-90", "90+"])
 
+class Followups(unittest.TestCase):
+    T = date(2026, 10, 13)
+    def fu(self, on, nxt=None, i=1): return {"id": i, "on_date": on, "next_date": nxt}
+
+    def test_flags(self):
+        f = lambda l: rules.followup_flag(40, l, self.T)
+        self.assertEqual(f([]), "none")
+        self.assertEqual(f([self.fu("2026-10-10")]), "ok")                         # 3 days ago, no next date
+        self.assertEqual(f([self.fu("2026-10-01")]), "overdue")                    # 12 days ago, no next date
+        self.assertEqual(f([self.fu("2026-09-01", "2026-10-20")]), "ok")           # promised date still ahead
+        self.assertEqual(f([self.fu("2026-09-01", "2026-10-12")]), "overdue")      # promised date passed
+        self.assertEqual(f([self.fu("2026-09-01", "2026-10-12", 1), self.fu("2026-10-12", None, 2)]), "ok")  # newer one supersedes
+
+    def test_validate(self):
+        _, errs = rules.validate_followup({"on_date": "2026-10-20", "kind": "Fax", "note": "x"}, "2026-08-01", self.T)
+        self.assertEqual(len(errs), 3)
+        c, errs = rules.validate_followup({"on_date": "2026-10-12", "kind": "Call", "note": "Spoke to AP team", "next_date": "2026-10-20"}, "2026-08-01", self.T)
+        self.assertEqual((errs, c["next_date"]), ([], "2026-10-20"))
+
 class Validation(unittest.TestCase):
     def test_rules(self):
         _, errs = rules.validate_estimate({"number": " EST 1 ", "est_date": "2999-01-01", "customer": "", "owners": ["Zed"],

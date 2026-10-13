@@ -35,13 +35,15 @@ Categories: `Annual fees`, `Set-up fees`, `Integration`, `Customisation`.
 | `POST /api/estimates/{id}/drop-decision` | finance: `{version, decision: "approve"\|"reject", reason}` |
 | `POST /api/estimates/upload` | `{filename, content: <base64 CSV/XLSX>, commit: false\|true}` — preview, then commit |
 | `POST /api/estimates/{id}/files` | `{filename, content: <base64 pdf/png/jpg>}` |
+| `POST /api/estimates/{id}/followups` | `{on_date, kind: Call\|Email\|WhatsApp\|Meeting\|Other, contact, note, next_date}` (sales/finance keys; pending estimates only) |
+| `GET /api/followups?min_age=30&sm=&flag=none\|overdue\|ok` | pending estimates older than `min_age` days with their follow-up timelines |
 | `GET /api/report?month=2026-10&credit=team\|primary\|split` | the dashboard numbers |
 | `GET /api/export.csv` | all estimates |
 
 `version` is optimistic locking: a stale value returns **409**; re-read and retry.
 
 ## Webhook
-Admin sets a URL and secret. Events: `estimate.created`, `estimate.updated`, `estimate.drop_requested`, `estimate.received`, `estimate.dropped`, `estimate.reopened`.
+Admin sets a URL and secret. Events: `estimate.created`, `estimate.updated`, `estimate.drop_requested`, `estimate.followup`, `estimate.received`, `estimate.dropped`, `estimate.reopened`.
 ```json
 {"event": "estimate.received", "at": "2026-10-13T15:02:11",
  "estimate": {"id": 131, "number": "EST-26-27/264", "status": "received", "external_ref": "CRM-DEAL-1042", "total": 100000, "closed_on": "2026-10-13", "invoice_no": "INV-1", "owners": "Arshdeep|Meisheil", "lines": [...]}}

@@ -143,6 +143,9 @@ class H(BaseHTTPRequestHandler):
         if P == ["estimates"]:
             if m == "GET": return self.list_estimates(c, q)
             if m == "POST": return self.create(c, b, user)
+        if P == ["followups"]: return self.followup_board(c, q)
+        if P[0] == "estimates" and len(P) == 3 and P[1].isdigit() and P[2] == "followups" and m == "POST":
+            return self.add_followup(c, int(P[1]), b, user)
         if P[0] == "estimates" and len(P) >= 3 and P[1].isdigit() and P[2] == "files":
             return self.files(c, m, int(P[1]), P[3:], b, user)
         if P[0] == "estimates" and len(P) >= 2 and P[1].isdigit():
@@ -159,6 +162,7 @@ class H(BaseHTTPRequestHandler):
         as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
         r = rules.build_report(db.load_estimates(c), ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
+        r["followups_needed"] = sum(1 for x in self.followup_board(c, {}) if x["flag"] != "ok")
         s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
         r["last_published"] = dict(s) if s else None
         return r
@@ -200,6 +204,45 @@ class H(BaseHTTPRequestHandler):
         rep = self.report(c, {"month": d[:7], "as_on": d})
         c.execute("INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?)", (d, user["name"], db.now(), json.dumps(rep, default=str)))
         return {"ok": True, "day": d}
+
+    # ---- follow-ups
+    def followups_for(self, c, ids):
+        out = {i: [] for i in ids}
+        if ids:
+            for r in c.execute("SELECT * FROM followups WHERE estimate_id IN (%s) ORDER BY on_date, id" % ",".join("?" * len(ids)), list(ids)):
+                out[r["estimate_id"]].append({k: r[k] for k in ("id", "on_date", "kind", "contact", "note", "next_date", "by_user")})
+        return out
+
+    def followup_board(self, c, q):
+        t = today(); min_age = int(q.get("min_age") or rules.TRACK_AFTER_DAYS) if str(q.get("min_age") or "0").isdigit() else rules.TRACK_AFTER_DAYS
+        ests = [e for e in db.load_estimates(c, "WHERE status='pending'") if (t - date.fromisoformat(e["est_date"])).days > min_age]
+        fu = self.followups_for(c, [e["id"] for e in ests]); out = []
+        for e in ests:
+            f = fu[e["id"]]; age = (t - date.fromisoformat(e["est_date"])).days
+            flag = rules.followup_flag(age, f, t)
+            if q.get("sm") and q["sm"] not in e["owners"].split("|"): continue
+            if q.get("flag") and q["flag"] != flag: continue
+            out.append({"id": e["id"], "number": e["number"], "customer": e["customer"], "owners": e["owners"], "team": rules.team_label(e["owners"]),
+                        "total": e["total"], "age": age, "flag": flag, "followups": f, "version": e["version"],
+                        "last": f[-1]["on_date"] if f else None, "next": next((x["next_date"] for x in reversed(f) if x["next_date"]), None) if f else None})
+        order = {"none": 0, "overdue": 1, "ok": 2}
+        out.sort(key=lambda r: (order[r["flag"]], -r["age"]))
+        return out
+
+    def add_followup(self, c, eid, b, user):
+        need(user, "sales", "finance")
+        rows = db.load_estimates(c, "WHERE id=?", (eid,))
+        if not rows: raise Err(404, "Estimate not found.")
+        e = rows[0]
+        if e["status"] != "pending": raise Err(409, "Follow-ups are only for pending estimates.")
+        if user["role"] == "sales" and not is_owner(user, e): raise Err(403, "Only the estimate's sales manager (or finance) can log follow-ups.")
+        f, errs = rules.validate_followup(b, e["est_date"], today())
+        if errs: raise Err(422, errs[0], {"errors": errs})
+        c.execute("INSERT INTO followups(estimate_id,on_date,kind,contact,note,next_date,by_user,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                  (eid, f["on_date"], f["kind"], f["contact"], f["note"], f["next_date"], user["name"], db.now()))
+        db.log(c, eid, user["name"], "follow-up", f'{f["kind"]}: {f["note"][:80]}' + (f' · next {f["next_date"]}' if f["next_date"] else ""))
+        self.emit("estimate.followup", eid, c)
+        return {"ok": True}
 
     # ---- bulk upload + attachments
     def bulk_upload(self, c, b, user):
@@ -276,6 +319,7 @@ class H(BaseHTTPRequestHandler):
         if m == "GET":
             e["audit"] = [dict(r) for r in c.execute("SELECT at,user,action,detail FROM audit WHERE estimate_id=? ORDER BY id DESC", (eid,))]
             e["age"] = (today() - date.fromisoformat(e["est_date"])).days if e["status"] == "pending" else None
+            e["followups"] = self.followups_for(c, [eid])[eid]
             e["files"] = [dict(r) for r in c.execute("SELECT id,name,size,uploaded_by FROM files WHERE estimate_id=? ORDER BY id", (eid,))]
             return e
         if b.get("version") != e["version"]:

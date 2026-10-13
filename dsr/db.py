@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT
 CREATE TABLE IF NOT EXISTS api_keys(id INTEGER PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, prefix TEXT, role TEXT NOT NULL CHECK(role IN('read','sales','finance')),
   active INTEGER DEFAULT 1, created_at TEXT, last_used TEXT);
 CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS followups(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+  on_date TEXT NOT NULL, kind TEXT NOT NULL, contact TEXT, note TEXT NOT NULL, next_date TEXT, by_user TEXT, created_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_fu_est ON followups(estimate_id);
 CREATE INDEX IF NOT EXISTS ix_lines_est ON lines(estimate_id);
 CREATE INDEX IF NOT EXISTS ix_audit_est ON audit(estimate_id);
 """

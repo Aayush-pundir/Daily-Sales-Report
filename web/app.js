@@ -40,7 +40,7 @@ async function boot() {
 function render() {
   const app = $("#app");
   if (!S.me) return renderLogin(app);
-  const tabs = [["dashboard", "Dashboard"], ["estimates", "Estimates"]];
+  const tabs = [["dashboard", "Dashboard"], ["estimates", "Estimates"], ["followups", "Follow-ups"]];
   if (can("finance")) tabs.push(["finance", "Finance desk"]);
   tabs.push(["history", "Reports"], ["rules", "Rules"]);
   if (S.me.role === "admin") tabs.push(["admin", "Admin"]);
@@ -50,7 +50,7 @@ function render() {
     <main id="main"></main>`;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; render(); };
-  ({ dashboard, estimates, finance, history: historyTab, rules: rulesTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
+  ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, rules: rulesTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
 }
 function renderLogin(app) {
   app.innerHTML = `<div class="login"><h1 style="margin-bottom:14px">Daily Sales Report</h1><form class="card" id="lf">
@@ -89,7 +89,7 @@ async function dashboard(el) {
     <label class="f">Credit<select id="split"><option value="team">Team, primary first</option><option value="primary" ${S.credit === "primary" ? "selected" : ""}>Primary salesperson only</option><option value="split" ${S.credit === "split" ? "selected" : ""}>Split equally</option></select></label>
     <a class="btn" href="/api/export.csv" download>Export CSV</a>
     ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
-  ${r.pending_drop_requests && can("finance") ? `<div class="attn"><button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button></div>` : ""}
+  ${(r.pending_drop_requests && can("finance")) || r.followups_needed ? `<div class="attn">${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
   <div class="roll">
     ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−"], ["Dropped / written off", t.dropped, t.dropped_n, "−"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
       .map(([l, v, n, op]) => `<div class="k">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
@@ -112,6 +112,7 @@ async function dashboard(el) {
   $("#mon").onchange = e => { S.month = e.target.value; render(); };
   $("#split").onchange = e => { S.credit = e.target.value; render(); };
   if ($("#pub")) $("#pub").onclick = async () => { try { await api("snapshots", { method: "POST", body: {} }); toast("Report published"); render(); } catch (e) { toast(e.message); } };
+  if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
   activate(el, "tr[data-team]", tr => { S.filters = { status: "pending", sm: tr.dataset.team.split(" & ")[0] }; S.tab = "estimates"; render(); });
 }
@@ -186,6 +187,7 @@ function editor(e) {
     <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Also credited (joint deal) — optional</div><div class="chips">${S.meta.sms.map(n => `<label><input type="checkbox" name="own" value="${esc(n)}" ${own.slice(1).includes(n) ? "checked" : ""}>${esc(n)}</label>`).join("")}</div></div>
     <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Fees (₹, exclusive of tax — leave blank if not applicable)</div><div class="form">${cats.map(c => `<label><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${CAT_COLOR[c]};margin-right:5px"></i>${c}</span><input type="number" min="0" step="0.01" name="cat_${esc(c)}" value="${lines[c] ?? ""}"></label>`).join("")}</div></div>
     <label>Report month<input name="period" type="month" required max="${S.meta.today.slice(0, 7)}" value="${e?.period || S.meta.today.slice(0, 7)}"></label><div class="muted full" style="font-size:12px;margin-top:-6px">The month this estimate is counted in (normally the estimate date's month).</div>
+    ${isNew ? `<label class="full">Estimate PDF from finance (optional — attach it so everyone can see the source)<input type="file" name="pdf" accept=".pdf,.png,.jpg,.jpeg"></label>` : ""}
     <label class="full">Notes<textarea name="notes" rows="2">${esc(e?.notes || "")}</textarea></label></form><div id="ee"></div>`,
     `<button class="btn" id="cx">Cancel</button><button class="btn primary" id="sv">Save</button>`, () => {
       $("#cx").onclick = closeModal;
@@ -194,7 +196,11 @@ function editor(e) {
         const body = { number: f.number.value, est_date: f.est_date.value, period: f.period.value, customer: f.customer.value, notes: f.notes.value, version: e?.version,
           owners: [f.primary.value, ...[...f.querySelectorAll("[name=own]:checked")].map(x => x.value)],
           lines: cats.map(c => ({ category: c, amount: f["cat_" + c].value })).filter(l => l.amount !== "" && +l.amount !== 0) };
-        try { await api(isNew ? "estimates" : "estimates/" + e.id, { method: isNew ? "POST" : "PUT", body }); closeModal(); toast("Saved"); render(); }
+        try {
+          const r = await api(isNew ? "estimates" : "estimates/" + e.id, { method: isNew ? "POST" : "PUT", body });
+          const pdf = isNew && f.pdf.files[0];
+          if (pdf) { try { await api(`estimates/${r.id}/files`, { method: "POST", body: { filename: pdf.name, content: await b64(pdf) } }); } catch (er) { toast("Saved, but the file was not attached: " + er.message); } }
+          closeModal(); toast("Saved"); render(); }
         catch (er) { $("#ee").innerHTML = `<div class="err">${(er.data?.errors || [er.message]).map(esc).join("<br>")}</div>`; }
       };
     });
@@ -225,6 +231,45 @@ function uploadDialog() {
     });
 }
 
+const FLAG = { none: ["dropped", "No follow-up yet"], overdue: ["dropreq", "Follow-up overdue"], ok: ["received", "On track"] };
+const timeline = (list, age) => list.length ? `<ol class="tl">${list.map((f, i) => `<li class="${i === list.length - 1 ? "last" : ""}"><div class="tl-h"><b>${fdate(f.on_date)}</b><span class="kind">${esc(f.kind)}</span><span class="muted">${esc(f.by_user)}${f.contact ? " · with " + esc(f.contact) : ""}</span></div>
+  <div class="tl-n">${esc(f.note)}</div>${f.next_date ? `<div class="tl-x">Next follow-up: <b>${fdate(f.next_date)}</b></div>` : ""}</li>`).join("")}</ol>` : `<div class="tl-empty">No follow-up has been logged${age != null ? ` — pending for ${age} days` : ""}.</div>`;
+const canFollow = e => S.me.role !== "sales" || (S.me.sm_name && e.owners.split("|").includes(S.me.sm_name));
+
+async function followupsTab(el) {
+  S.fu = S.fu || { flag: "", sm: S.me.role === "sales" ? S.me.sm_name || "" : "", age: "30" };
+  const f = S.fu, qs = new URLSearchParams({ min_age: f.age, ...(f.sm ? { sm: f.sm } : {}), ...(f.flag ? { flag: f.flag } : {}) });
+  const [rows, all] = await Promise.all([api("followups?" + qs), api(`followups?min_age=${f.age}` + (f.sm ? "&sm=" + encodeURIComponent(f.sm) : ""))]);
+  const n = k => all.filter(r => r.flag === k).length;
+  el.innerHTML = `<div class="bar"><div style="margin-right:auto"><h2>Follow-ups on pending estimates</h2><div class="sub">Every pending estimate older than ${f.age} days, with the full timeline of follow-ups. Worst first.</div></div>
+    <label class="f">Older than<select id="fa">${[30, 60, 90].map(d => `<option value="${d}" ${String(d) === f.age ? "selected" : ""}>${d} days</option>`).join("")}</select></label>
+    <label class="f">Sales manager<select id="fm"><option value="">All</option>${S.meta.sms.map(s => `<option ${s === f.sm ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
+    <label class="f">Show<select id="ff"><option value="">All</option>${Object.entries(FLAG).map(([k, v]) => `<option value="${k}" ${f.flag === k ? "selected" : ""}>${v[1]}</option>`).join("")}</select></label></div>
+  <div class="attn" style="margin-bottom:16px"><span class="pill dropped">${n("none")} with no follow-up</span><span class="pill dropreq">${n("overdue")} overdue</span><span class="pill received">${n("ok")} on track</span><span class="muted" style="align-self:center">${all.length} estimates · ₹ ${inr(all.reduce((a, r) => a + r.total, 0))}</span></div>
+  <div class="list">${rows.map(r => `<div class="card fu"><div class="fu-h"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span>
+      <div class="muted">${teamHtml(r.team)} · ₹ ${inr(r.total)} · <b>${r.age} days</b> pending · ${r.followups.length} follow-up${r.followups.length === 1 ? "" : "s"}</div></div>
+      <span class="pill ${FLAG[r.flag][0]}">${FLAG[r.flag][1]}</span>
+      <button class="btn sm" data-open="${r.id}">Open</button>${canFollow(r) ? `<button class="btn sm primary" data-log="${r.id}">Log follow-up</button>` : ""}</div>${timeline(r.followups, r.age)}</div>`).join("") || `<div class="muted card">Nothing here — no estimate matches.</div>`}</div>`;
+  const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
+  set("#fa", "age"); set("#fm", "sm"); set("#ff", "flag");
+  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
+  el.querySelectorAll("[data-log]").forEach(b => b.onclick = () => followupForm(rows.find(r => r.id == b.dataset.log)));
+}
+function followupForm(e) {
+  modal("Log follow-up · " + esc(e.number), `<form class="form" id="ff2">
+    <label>Date<input type="date" name="on_date" required min="${e.est_date}" max="${S.meta.today}" value="${S.meta.today}"></label>
+    <label>How<select name="kind">${["Call", "Email", "WhatsApp", "Meeting", "Other"].map(k => `<option>${k}</option>`).join("")}</select></label>
+    <label class="full">Spoke to (optional)<input name="contact" placeholder="Name / role at the customer"></label>
+    <label class="full">What was discussed / their response<textarea name="note" rows="3" required placeholder="e.g. Customer confirmed PO is with their finance team; payment promised by month end"></textarea></label>
+    <label class="full">Next follow-up on (optional)<input type="date" name="next_date" min="${S.meta.today}"></label></form><div id="ee"></div>`,
+    `<button class="btn" id="cx">Cancel</button><button class="btn primary" id="go">Save follow-up</button>`, () => {
+      $("#cx").onclick = closeModal;
+      $("#go").onclick = async () => { const f = $("#ff2"); if (!f.reportValidity()) return;
+        try { await api(`estimates/${e.id}/followups`, { method: "POST", body: Object.fromEntries(new FormData(f)) }); closeModal(); toast("Follow-up logged"); render(); }
+        catch (er) { $("#ee").innerHTML = `<div class="err">${(er.data?.errors || [er.message]).map(esc).join("<br>")}</div>`; } };
+    });
+}
+
 async function detail(id) {
   const e = await api("estimates/" + id), mineOrAdmin = S.me.role === "admin" || (S.me.sm_name && e.owners.split("|").includes(S.me.sm_name));
   const btns = [];
@@ -234,6 +279,7 @@ async function detail(id) {
     else if (can("finance")) btns.push(`<button class="btn danger" id="a-drop">Drop…</button>`);
     if (S.me.role === "sales" && mineOrAdmin && !e.drop_requested_by) btns.push(`<button class="btn danger" id="a-dreq">Propose drop…</button>`);
     if (can("sales") && mineOrAdmin) btns.push(`<button class="btn" id="a-edit">Edit</button>`);
+    if (can("finance") || mineOrAdmin) btns.push(`<button class="btn" id="a-fu">Log follow-up</button>`);
   } else if (S.me.role === "admin") btns.push(`<button class="btn" id="a-reopen">Reopen…</button>`);
   const kv = [["Customer", esc(e.customer)], ["Report month", fmonth(e.period)], ["Estimate date", fdate(e.est_date) + (e.age != null ? ` · ${e.age} days old` : "")], ["Primary salesperson", esc(e.owners.split("|")[0])], ...(e.owners.includes("|") ? [["Also credited", esc(e.owners.split("|").slice(1).join(", "))]] : []),
     ...e.lines.map(l => [l.category, "₹ " + inr(l.amount)]), ["Total", `<b>₹ ${inr(e.total)}</b>`]];
@@ -243,9 +289,10 @@ async function detail(id) {
   if (e.notes) kv.push(["Notes", esc(e.notes)]);
   kv.push(["Documents", (e.files.map(f => `<a href="/api/estimates/${e.id}/files/${f.id}">${esc(f.name)}</a> <span class="muted">${Math.round(f.size / 1024)} KB · ${esc(f.uploaded_by)}</span>`).join("<br>") || '<span class="muted">none</span>') + (can("sales") && mineOrAdmin || can("finance") ? `<br><label class="btn sm" style="display:inline-block;margin-top:6px;cursor:pointer">Attach estimate PDF/image<input type="file" id="att" accept=".pdf,.png,.jpg,.jpeg" hidden></label>` : "")]);
   modal(`${esc(e.number)} ${pill(e)}`, `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+    <h3 style="font-size:13px;margin-top:14px">Follow-ups (${e.followups.length})</h3>${timeline(e.followups, e.status === "pending" && e.age > 30 ? e.age : null)}
     <h3 style="font-size:13px;margin-top:14px">History</h3><ul class="log">${e.audit.map(a => `<li><b>${esc(a.action)}</b> · ${esc(a.user)} · ${esc(a.at.replace("T", " "))}${a.detail ? `<br>${esc(a.detail)}` : ""}</li>`).join("")}</ul>`, btns.join(""), () => {
     const on = (id, fn) => $(id) && ($(id).onclick = fn);
-    on("#a-edit", () => editor(e));
+    on("#a-edit", () => editor(e)); on("#a-fu", () => followupForm(e));
     if ($("#att")) $("#att").onchange = async ev => { const f = ev.target.files[0]; if (!f) return; try { await api(`estimates/${e.id}/files`, { method: "POST", body: { filename: f.name, content: await b64(f) } }); toast("Attached"); detail(e.id); } catch (er) { toast(er.message); } };
     on("#a-rec", () => payForm(e)); on("#a-app", () => reasonForm(e, "drop-decision", "Approve drop", { decision: "approve" }, e.drop_reason));
     on("#a-rej", () => reasonForm(e, "drop-decision", "Reject drop request", { decision: "reject" }, "", true));
@@ -303,6 +350,7 @@ async function rulesTab(el) {
   el.innerHTML = `<div class="bar"><h2>How this works</h2></div><div class="grid g2">
   <div class="card help"><h3>Who enters what</h3><ul>
    <li><b>Sales</b> raise estimates (number, date, customer, fees by type, sales manager). They can edit an estimate while it is pending, and <i>propose</i> a drop with a reason. They can see everyone's numbers.</li>
+   <li>Finance prepares the estimate elsewhere and emails the PDF; <b>sales enter the details here from that PDF</b> (and can attach it).</li>
    <li><b>Finance</b> records the payment and tax invoice (which converts the estimate), approves or rejects drop requests, may drop directly with a reason, and publishes the daily report.</li>
    <li><b>Admin</b> manages users and the sales-manager list, and is the only role that can reopen a closed estimate.</li></ul></div>
   <div class="card help"><h3>Rules the system enforces</h3><ul>
@@ -313,6 +361,8 @@ async function rulesTab(el) {
   <div class="card help"><h3>How the numbers are built</h3><ul>
    <li><b>Opening</b> = estimates booked in earlier months that were still pending on the 1st. <b>New</b> = estimates booked in the month (the <i>report month</i> on each estimate, normally its date's month). <b>Converted / Dropped</b> = closed in the month (any estimate date).</li>
    <li><b>Closing = Opening + New − Converted − Dropped</b> = what is pending as on the report date. Because closure dates are stored, you can pick any past month and get the same answer the workbook would have given.</li>
+   <li><b>Follow-ups:</b> any pending estimate older than 30 days is on the Follow-ups board with its full timeline. It shows <i>No follow-up yet</i> if none is logged, <i>Overdue</i> once the promised next date passes (or 7 days after the last one when no next date was set), otherwise <i>On track</i>. Sales log their own; finance can log on any.</li>
+   <li><b>Payment</b> is in full only: finance marks the estimate paid and enters the payment date. There is no drop date to estimate; a drop is recorded with a reason when finance approves it.</li>
    <li><b>Age</b> = report date − estimate date: 0–30, 31–60, 61–90, 90+ days.</li>
    <li>The first name on an estimate is the <b>primary salesperson</b>. "A &amp; B" and "B &amp; A" are separate rows, as in the workbook; switch <i>Credit</i> to count joint deals for the primary only, or split them equally.</li></ul></div>
   <div class="card help"><h3>Daily routine</h3><ul><li>Sales update estimates through the day.</li><li>Finance records receipts and decisions.</li><li>Finance clicks <b>Publish today's report</b> — it freezes the day's numbers under <i>Published reports</i> and anyone can open the dashboard live instead of waiting for the email.</li></ul></div></div>`;
