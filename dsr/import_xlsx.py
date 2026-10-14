@@ -42,9 +42,22 @@ def read(ws, first_row, cols, status_override=None):
                "category": rules.norm_category(r[cols["cat"]]) if cols["cat"] is not None and r[cols["cat"]] else None}
 
 
-def run(path, as_of, dbpath=None):
+def valid_date(s):
+    try: return date.fromisoformat(s).isoformat()
+    except ValueError: raise argparse.ArgumentTypeError(f"'{s}' is not a date. Use YYYY-MM-DD, for example 2026-10-13 (check there is nothing typed after the day).")
+
+
+def run(path, as_of, dbpath=None, reset=False):
     wb = openpyxl.load_workbook(path, data_only=True)
     c = db.connect(dbpath)
+    if c.execute("SELECT 1 FROM estimates LIMIT 1").fetchone():
+        if not reset:
+            raise SystemExit("This database already contains estimates, so the import was not run.\n"
+                             "To throw those estimates away and load the workbook again, add --reset to the command\n"
+                             "(users and sales managers are kept; estimates, follow-ups, change requests and attachments are removed).")
+        for t in ("followups", "change_requests", "files", "lines", "audit", "notifications", "estimates"):
+            c.execute(f"DELETE FROM {t}")
+        c.commit(); print("Removed the existing estimates.")
     recs, notes = [], []
     cur = dict(number=1, amount=4, cat=6)
     for r in read(wb["Current Month"], 2, cur): r["src"] = "cur"; recs.append(r)
@@ -81,5 +94,8 @@ def run(path, as_of, dbpath=None):
 
 
 if __name__ == "__main__":
-    a = argparse.ArgumentParser(); a.add_argument("xlsx"); a.add_argument("--as-of", default=date.today().isoformat())
-    a.add_argument("--db"); x = a.parse_args(); run(x.xlsx, x.as_of, x.db)
+    a = argparse.ArgumentParser(description="One-time import of the legacy Revenue workbook.")
+    a.add_argument("xlsx", help="path to the Excel file")
+    a.add_argument("--as-of", type=valid_date, default=date.today().isoformat(), help="date of the report, YYYY-MM-DD (already-paid/dropped rows are dated this day)")
+    a.add_argument("--reset", action="store_true", help="remove existing estimates first, then import")
+    a.add_argument("--db"); x = a.parse_args(); run(x.xlsx, x.as_of, x.db, x.reset)
