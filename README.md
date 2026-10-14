@@ -36,7 +36,7 @@ Sales type in the estimates they raise, Finance records the payments, and everyb
 | Finance prepares the estimate, emails the PDF | Same — nothing changes here |
 | Sales re-type details into a sheet | Sales type the details **once** into the app (and can attach the PDF) |
 | Finance updates "Received / Dropped" by hand | Finance clicks **Record payment** or approves a **Drop** |
-| Someone rebuilds the Summary and emails it | The dashboard is always live; Finance can also **Publish** a frozen copy of the day's numbers |
+| Someone rebuilds the Summary and emails it | The dashboard is always live for everyone |
 | "Did anyone call this customer?" | Every follow-up on an estimate older than 30 days has a visible **timeline** |
 | "Who changed the amount?" | Sales **request** changes, Finance approves, everyone is notified, everything is logged |
 
@@ -69,7 +69,6 @@ There are three kinds of user. An administrator creates the accounts.
 | Propose to drop an estimate (with a reason) | their own | – | – |
 | Approve / reject / make a drop | – | ✔ | ✔ |
 | Record that the customer paid | – | ✔ | ✔ |
-| Publish the day's report | – | ✔ | ✔ |
 | Attach the estimate PDF | on their own | ✔ | ✔ |
 | Re-open a closed (paid/dropped) estimate | – | – | ✔ |
 | Manage users, the sales-manager list, API keys, the webhook | – | – | ✔ |
@@ -82,7 +81,7 @@ There are three kinds of user. An administrator creates the accounts.
 2. **During the day** – Sales call/WhatsApp/email customers and log each follow-up. If a PDF was wrong they raise a *change request*.
 3. **When money arrives** – Finance opens the estimate, clicks **Record payment**, enters the invoice number and the date the money came in. The estimate turns green and drops out of "pending".
 4. **When a deal is dead** – Sales propose a drop with a reason; Finance approves.
-5. **End of day** – Finance clicks **Publish today's report**. That freezes today's numbers under **Reports** so they can be looked at later exactly as they were.
+5. **End of day** – nothing to send out: the dashboard is always up to date for everyone, and **Export CSV** gives anyone a spreadsheet of every estimate.
 
 ---
 
@@ -105,7 +104,6 @@ There are three kinds of user. An administrator creates the accounts.
 | **Age** | Days between the estimate date and the report date. |
 | **Follow-up** | A logged touch-point with the customer about an unpaid estimate (call, email, WhatsApp, meeting). |
 | **Change request** | Sales asking Finance to correct a saved estimate. |
-| **Published report** | A frozen copy of one day's numbers. |
 
 ---
 
@@ -210,7 +208,6 @@ sequenceDiagram
 | **Estimates** | Everyone | Search and filter every estimate. **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
 | **Follow-ups** | Everyone | Every pending estimate over 30 days (or 60 / 90) with its timeline. **Search** (number, customer, name, or what was discussed), **filter** by sales manager, fee type and flag, and **sort** (worst first, oldest, amount, most/fewest follow-ups, last or next follow-up…). **Log follow-up** right from the card. Sales see their own by default. |
 | **Finance desk** | Finance | Three lists: **change requests** (approve / reject), **drop requests**, and **all pending estimates** (open one to record payment). One bar at the top **searches** all three (number, customer, sales manager, or the reason given), **filters** by sales manager, fee type and age, and **sorts** (oldest, newest, amount, customer, number, sales manager). *Reset* clears it. |
-| **Reports** | Everyone | The frozen daily reports Finance published. |
 | **Admin** | Admin | Users, sales-manager list, API keys for other systems, webhook. |
 | **🔔 bell** | Everyone | Shared notifications: change requested / approved / rejected / withdrawn. A red number shows how many you have not seen. It refreshes by itself about every 20 seconds. |
 
@@ -263,9 +260,6 @@ A "count" is a number of **estimates** (not fee lines). An estimate with three f
 ### Conversions per month
 The bar chart counts estimates by the month **payment was received**. It starts from the first month in which a payment was recorded in the app.
 
-### Published reports
-"Publish today's report" saves a copy of the dashboard's numbers. Editing data later never changes a published copy.
-
 ---
 
 ## 8. Settings, limits and parameters
@@ -301,7 +295,6 @@ The bar chart counts estimates by the month **payment was received**. It starts 
 | Notifications shown | latest 40 (the server never returns more than 100) |
 | API key roles | `read` · `sales` · `finance` |
 | Webhook | HTTPS only (plain http allowed only for localhost); one attempt, 8 second timeout; signed with HMAC-SHA256 |
-| Published reports listed | latest 60 |
 
 ### Environment variables (set when starting the server)
 
@@ -416,7 +409,6 @@ erDiagram
 | `notifications` · `notif_reads` | The shared notification feed, and how far each person has read it. |
 | `audit` | The history log of every action. |
 | `files` | Attached documents (the files themselves are stored on disk). |
-| `snapshots` | Published daily reports (stored as a frozen copy). |
 | `users` · `sessions` · `sms` | Accounts, sign-in sessions, and the list of sales managers. |
 | `api_keys` · `settings` | Keys for other systems (only a hash is stored) and the webhook address. |
 
@@ -526,9 +518,8 @@ python3 -m unittest discover -s tests -t .
 
 ## 13. What it does not do (yet)
 
-- **No email sending.** The dashboard is live; Finance can publish a frozen copy. (A daily email linking to it is an easy add-on.)
+- **No email sending.** The dashboard is live. (A daily email linking to it is an easy add-on.)
 - **No part-payments** — payment is in full, by design.
-- **No automatic scheduling** of "Publish today's report" (it is a button).
 - **No HTTPS, login lock-out or password reset** built in (see Security). Quick sign-in has no passwords at all and is meant for your own computer only.
 - **Notifications are in the app**, not by email or phone push.
 - **Desktop only** — no phone layout.
@@ -536,7 +527,7 @@ python3 -m unittest discover -s tests -t .
 - **Webhooks make one attempt** and do not retry.
 - **Customer names are free text** — the same customer typed two ways counts as two customers.
 
-Ideas that would add the most value next: a nightly auto-publish, an emailed link to the daily report, a customer master list (to avoid duplicate spellings), and reminder emails for overdue follow-ups.
+Ideas that would add the most value next: an emailed link to the dashboard, a customer master list (to avoid duplicate spellings), and reminder emails for overdue follow-ups.
 
 ---
 

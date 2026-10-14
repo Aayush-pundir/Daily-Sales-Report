@@ -186,7 +186,6 @@ class H(BaseHTTPRequestHandler):
             return self.files(c, m, int(P[1]), P[3:], b, user)
         if P[0] == "estimates" and len(P) >= 2 and P[1].isdigit():
             return self.estimate_action(c, m, int(P[1]), P[2] if len(P) > 2 else "", b, user)
-        if P[0] == "snapshots": return self.snapshots(c, m, P, b, user)
         if P == ["export.csv"]: return self.export(c, q)
         if P[0] in ("users", "sms", "keys", "webhook"): return self.admin(c, m, P, b, user)
         raise Err(404, "No such endpoint.")
@@ -201,8 +200,6 @@ class H(BaseHTTPRequestHandler):
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
         r["open_change_requests"] = c.execute("SELECT COUNT(*) FROM change_requests WHERE status='open'").fetchone()[0]
         r["followups_needed"] = sum(1 for x in self.followup_board(c, {}) if x["flag"] != "ok")
-        s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
-        r["last_published"] = dict(s) if s else None
         return r
 
     def report_drill(self, c, q):
@@ -249,20 +246,6 @@ class H(BaseHTTPRequestHandler):
                         e["closed_on"] or "", e["invoice_no"] or "", e["invoice_date"] or "", e["payment_ref"] or "", e["drop_reason"] or ""])
         return buf.getvalue(), "text/csv", [("Content-Disposition", f'attachment; filename="estimates-{today()}.csv"')]
 
-    def snapshots(self, c, m, P, b, user):
-        if m == "GET" and len(P) == 1:
-            return [dict(r) for r in c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 60")]
-        if m == "GET":
-            r = c.execute("SELECT * FROM snapshots WHERE day=?", (P[1],)).fetchone()
-            if not r: raise Err(404, "No report published for that day.")
-            return {**dict(r), "data": json.loads(r["data"])}
-        need(user, "finance")
-        d = today().isoformat()
-        rep = self.report(c, {"month": d[:7], "as_on": d})
-        c.execute("INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?)", (d, user["name"], db.now(), json.dumps(rep, default=str)))
-        return {"ok": True, "day": d}
-
-    # ---- follow-ups
     def followups_for(self, c, ids):
         out = {i: [] for i in ids}
         if ids:

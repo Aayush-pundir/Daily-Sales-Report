@@ -44,7 +44,6 @@ function render() {
   if (!S.me) return renderLogin(app);
   const tabs = [["dashboard", "Dashboard"], ["estimates", "Estimates"], ["followups", "Follow-ups"]];
   if (can("finance")) tabs.push(["finance", "Finance desk"]);
-  tabs.push(["history", "Reports"]);
   if (S.me.role === "admin") tabs.push(["admin", "Admin"]);
   if (!tabs.some(t => t[0] === S.tab)) S.tab = "dashboard";          // e.g. someone else signed in on this page before
   app.innerHTML = `<header class="top"><span class="brand">Daily Sales Report</span>
@@ -54,7 +53,7 @@ function render() {
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   $("#bell").onclick = openNotifications; pollNotifications(true);
   $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; S.tab = "dashboard"; S.fu = null; S.filters = { status: "pending" }; S.unread = 0; render(); };
-  ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
+  ({ dashboard, estimates, followups: followupsTab, finance, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
 }
 async function renderLogin(app) {
   $("#toast").style.display = "none";
@@ -122,14 +121,13 @@ function monthOptions() {
 async function dashboard(el) {
   const r = await api(`report?month=${S.month}&credit=${S.credit}`);
   const t = r.total, nz = (a, b) => b ? Math.round(a / b * 100) : 0;
-  const lastPub = r.last_published;
   el.innerHTML = `
   <div class="bar"><div style="margin-right:auto"><h2>Report as on ${fdate(r.as_on)}</h2>
-      <div class="sub">${lastPub ? `Last published ${fdate(lastPub.day)} by ${esc(lastPub.published_by)}` : "Not yet published"} · amounts are estimate sub-totals (before tax)</div></div>
+      <div class="sub">Amounts are estimate sub-totals (before tax)</div></div>
     <label class="f">Month<select id="mon">${monthOptions().map(m => `<option value="${m}" ${m === S.month ? "selected" : ""}>${fmonth(m)}</option>`).join("")}</select></label>
     <label class="f">Credit<select id="split"><option value="team">Team, primary first</option><option value="primary" ${S.credit === "primary" ? "selected" : ""}>Primary salesperson only</option><option value="split" ${S.credit === "split" ? "selected" : ""}>Split equally</option></select></label>
     <a class="btn" href="/api/export.csv" download>Export CSV</a>
-    ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
+</div>
   ${(r.pending_drop_requests && can("finance")) || r.followups_needed || r.open_change_requests ? `<div class="attn">${r.open_change_requests ? `<button id="goCr">${r.open_change_requests} change request${r.open_change_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
   <div class="roll">
     ${[["Opening estimates", t.opening, t.opening_n, "", "", "opening"], ["New estimates raised", t.new, t.new_n, "+", "", "new"], ["Converted to tax invoice", t.converted, t.converted_n, "−", "good", "converted"], ["Dropped / written off", t.dropped, t.dropped_n, "−", "bad", "dropped"], ["Closing estimates (pending)", t.closing, t.closing_n, "=", "", "closing"]]
@@ -158,7 +156,6 @@ async function dashboard(el) {
   activate(el, "tr[data-id]", tr => detail(+tr.dataset.id));
   $("#mon").onchange = e => { S.month = e.target.value; render(); };
   $("#split").onchange = e => { S.credit = e.target.value; render(); };
-  if ($("#pub")) $("#pub").onclick = async () => { try { await api("snapshots", { method: "POST", body: {} }); toast("Report published"); render(); } catch (e) { toast(e.message); } };
   if ($("#goCr")) $("#goCr").onclick = () => { if (can("finance")) S.tab = "finance"; else { S.filters = { status: "pending", change_requested: "1" }; S.tab = "estimates"; } render(); };
   if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
@@ -488,18 +485,6 @@ async function finance(el) {
     if ($("#more")) $("#more").onclick = () => { F.limit += 50; paint(); };
   };
   bindToolbar(el, F, DEF, () => { F.limit = DEF.limit; paint(); }, () => render()); paint();
-}
-
-/* ---------- published history ---------- */
-async function historyTab(el) {
-  const list = await api("snapshots");
-  el.innerHTML = `<div class="bar"><h2>Published reports</h2><div class="sub">The numbers exactly as published each day — they don't change when data is edited later.</div></div>
-  <div class="grid g2"><div class="card"><table><tbody>${list.map(s => `<tr class="click" tabindex="0" data-d="${s.day}"><td>${fdate(s.day)}</td><td class="muted">${esc(s.published_by)}</td></tr>`).join("") || '<tr><td class="muted">Nothing published yet. Finance publishes from the dashboard.</td></tr>'}</tbody></table></div><div class="card" id="snap"><div class="muted">Pick a day.</div></div></div>`;
-  activate(el, "tr[data-d]", async tr => {
-    const s = await api("snapshots/" + tr.dataset.d), r = s.data, t = r.total;
-    $("#snap").innerHTML = `<h3>${fdate(s.day)} · published by ${esc(s.published_by)}</h3><dl class="kv"><dt>Opening</dt><dd class="num">₹ ${inr(t.opening)}</dd><dt>+ New</dt><dd class="num">₹ ${inr(t.new)}</dd><dt>− Converted</dt><dd class="num">₹ ${inr(t.converted)}</dd><dt>− Dropped</dt><dd class="num">₹ ${inr(t.dropped)}</dd><dt><b>Closing</b></dt><dd class="num"><b>₹ ${inr(t.closing)}</b></dd></dl>
-      <table><thead><tr><th>Team</th><th class="r">Converted</th><th class="r">Closing</th></tr></thead><tbody>${r.teams.map(x => `<tr><td>${esc(x.team)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.closing)}</td></tr>`).join("")}</tbody></table>`;
-  });
 }
 
 /* ---------- admin ---------- */
