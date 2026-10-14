@@ -100,7 +100,7 @@ There are three kinds of user. An administrator creates the accounts.
 | **Report month** | The month an estimate is counted in. Normally the month of its date. It can differ (an estimate dated 8 Oct can be filed under September, as in the old sheet). |
 | **Opening** | Estimates from earlier months that were still unpaid on the 1st of the month. |
 | **New** | Estimates counted in the month. |
-| **Converted** | Estimates paid in the month. |
+| **Converted** | Estimates paid in the month (shown in green). |
 | **Closing** | What is still unpaid at the report date: `Opening + New − Converted − Dropped`. |
 | **Age** | Days between the estimate date and the report date. |
 | **Follow-up** | A logged touch-point with the customer about an unpaid estimate (call, email, WhatsApp, meeting). |
@@ -206,7 +206,7 @@ sequenceDiagram
 
 | Screen | Who it is for | What you do there |
 |---|---|---|
-| **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted → Dropped → Closing. Below: conversions per month, ageing, the sales-manager table (click a name to see their pending estimates), the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
+| **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted → Dropped → Closing. Below: conversions per month, ageing, the sales-manager table (click a row to see exactly that row's pending estimates — "Meisheil" shows only Meisheil's own, not the ones shared as "Meisheil & Arshdeep" or "Arshdeep & Meisheil"; each is its own row), the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
 | **Estimates** | Everyone | Search and filter every estimate. **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
 | **Follow-ups** | Everyone | Every pending estimate over 30 days (or 60 / 90) with its timeline, worst first. **Log follow-up** right from the card. Sales see their own by default. |
 | **Finance desk** | Finance | Three lists: **change requests** (approve / reject), **drop requests**, and **pending estimates, oldest first** (open one to record payment). |

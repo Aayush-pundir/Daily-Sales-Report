@@ -215,6 +215,8 @@ class H(BaseHTTPRequestHandler):
             e["team"] = rules.team_label(e["owners"]); e["categories"] = [l["category"] for l in e["lines"]]
             if q.get("status") and e["status"] != q["status"]: continue
             if q.get("sm") and q["sm"] not in e["owners"].split("|"): continue
+            if q.get("team") and e["owners"] != q["team"]: continue                          # exactly this team, in this order
+            if q.get("primary") and e["owners"].split("|")[0] != q["primary"]: continue      # this person is the primary
             if q.get("category") and q["category"] not in e["categories"]: continue
             if q.get("bucket") and e["bucket"] != q["bucket"]: continue
             if q.get("drop_requested") == "1" and not (e["status"] == "pending" and e["drop_requested_by"]): continue

@@ -132,14 +132,14 @@ async function dashboard(el) {
     ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
   ${(r.pending_drop_requests && can("finance")) || r.followups_needed || r.open_change_requests ? `<div class="attn">${r.open_change_requests ? `<button id="goCr">${r.open_change_requests} change request${r.open_change_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
   <div class="roll">
-    ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−"], ["Dropped / written off", t.dropped, t.dropped_n, "−"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
-      .map(([l, v, n, op]) => `<div class="k">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
+    ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−", "good"], ["Dropped / written off", t.dropped, t.dropped_n, "−", "bad"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
+      .map(([l, v, n, op, tone]) => `<div class="k ${tone || ""}">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
   </div>
   <div class="grid g2" style="margin-bottom:16px">
     <div class="card"><h3>Conversions by month</h3><div class="hint">Estimates converted to tax invoices, by the month payment was received.</div><div id="trend"></div></div>
     <div class="card"><h3>Ageing of closing estimates</h3><div class="hint">Value still pending, by days since estimate date and fee type.</div><div id="ageing"></div></div>
   </div>
-  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a row to list their pending estimates.</div>
+  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a row to list exactly that row's pending estimates.</div>
     <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th><th class="r">Opening</th><th class="r">+ New</th><th class="r">− Converted</th><th class="r">− Dropped</th><th class="r">Closing</th><th class="r">%</th><th>Closing by age</th></tr></thead><tbody>
     ${r.teams.map(x => `<tr class="click" tabindex="0" data-team="${esc(x.team)}"><td>${teamHtml(x.team)}</td><td class="r num">${inr(x.opening)}</td><td class="r num">${inr(x.new)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.dropped)}</td><td class="r num"><b>${inr(x.closing)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
     <tr class="total"><td>Total</td><td class="r num">${inr(t.opening)}</td><td class="r num">${inr(t.new)}</td><td class="r num">${inr(t.converted)}</td><td class="r num">${inr(t.dropped)}</td><td class="r num">${inr(t.closing)}</td><td class="r num">100%</td><td></td></tr></tbody></table></div></div>
@@ -156,7 +156,11 @@ async function dashboard(el) {
   if ($("#goCr")) $("#goCr").onclick = () => { if (can("finance")) S.tab = "finance"; else { S.filters = { status: "pending", change_requested: "1" }; S.tab = "estimates"; } render(); };
   if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
-  activate(el, "tr[data-team]", tr => { S.filters = { status: "pending", sm: tr.dataset.team.split(" & ")[0] }; S.tab = "estimates"; render(); });
+  activate(el, "tr[data-team]", tr => {            // show exactly what the row counts: that team only, not everyone who shares an estimate with them
+    const name = tr.dataset.team, mode = S.credit;
+    S.filters = { status: "pending", ...(mode === "team" ? { team: name.split(" & ").join("|") } : mode === "primary" ? { primary: name } : { sm: name }) };
+    S.tab = "estimates"; render();
+  });
 }
 function ageBar(ag, tot, name) {
   if (!tot) return "";
@@ -196,8 +200,9 @@ function ageingChart(r, W) {
 async function estimates(el) {
   const f = S.filters, qs = new URLSearchParams(Object.fromEntries(Object.entries(f).filter(([, v]) => v)));
   const rows = await api("estimates?" + qs);
+  const chipText = f.team ? `Only “${f.team.split("|").join(" & ")}” (primary first)` : f.primary ? `Only estimates where ${f.primary} is the primary salesperson` : "";
   const opt = (arr, cur, all) => `<option value="">${all}</option>` + arr.map(a => `<option ${a === cur ? "selected" : ""}>${esc(a)}</option>`).join("");
-  el.innerHTML = `<div class="bar"><h2>Estimates <span class="muted num" style="font-weight:400;font-size:14px">${rows.length} · ₹ ${inr(rows.reduce((a, r) => a + r.total, 0))}</span></h2>
+  el.innerHTML = `<div class="bar"><h2>Estimates <span class="muted num" style="font-weight:400;font-size:14px">${rows.length} · ₹ ${inr(rows.reduce((a, r) => a + r.total, 0))}</span>${chipText ? ` <span class="chip" id="chip">${esc(chipText)} <button aria-label="Clear this filter" id="chipx">✕</button></span>` : ""}</h2>
     <label class="f">Search<input id="fq" placeholder="Customer or number" value="${esc(f.q || "")}"></label>
     <label class="f">Status<select id="fs"><option value="">All</option>${["pending", "received", "dropped"].map(s => `<option ${f.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
     <label class="f">Sales manager<select id="fm">${opt(S.meta.sms, f.sm, "All")}</select></label>
@@ -210,6 +215,7 @@ async function estimates(el) {
       <td><span class="fees">${r.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td>
       <td class="r num">${inr(r.total)}</td><td>${pill(r)}${r.change_requested ? ' <span class="pill cr">change requested</span>' : ""}</td><td class="r num">${r.age != null ? r.age + "d" : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>`}</tbody></table></div>`;
   const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
+  if ($("#chipx")) $("#chipx").onclick = () => { delete f.team; delete f.primary; render(); };
   set("#fcr", "change_requested"); set("#fs", "status"); set("#fm", "sm"); set("#fc", "category"); set("#fb", "bucket");
   $("#fq").onkeydown = e => { if (e.key === "Enter") { f.q = e.target.value; render(); } }; $("#fq").onblur = e => { if (e.target.value !== (f.q || "")) { f.q = e.target.value; render(); } };
   if ($("#new")) $("#new").onclick = () => editor();
