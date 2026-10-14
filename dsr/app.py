@@ -166,6 +166,7 @@ class H(BaseHTTPRequestHandler):
         if P == ["meta"]:
             return {"today": today().isoformat(), "categories": rules.CATEGORIES, "buckets": rules.BUCKETS,
                     "sms": [r["name"] for r in c.execute("SELECT name FROM sms WHERE active=1 ORDER BY name")]}
+        if P == ["report", "drill"]: return self.report_drill(c, q)
         if P == ["report"]: return self.report(c, q)
         if P == ["estimates", "template.csv"]: return uploads.TEMPLATE, "text/csv", [("Content-Disposition", 'attachment; filename="estimate-upload-template.csv"')]
         if P == ["estimates", "upload"] and m == "POST": return self.bulk_upload(c, b, user)
@@ -203,6 +204,19 @@ class H(BaseHTTPRequestHandler):
         s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
         r["last_published"] = dict(s) if s else None
         return r
+
+    def report_drill(self, c, q):
+        ym = q.get("month") or today().strftime("%Y-%m")
+        if not re.fullmatch(r"\d{4}-\d{2}", ym): raise Err(400, "month must be YYYY-MM")
+        metric = q.get("metric")
+        if metric not in rules.METRICS: raise Err(400, "metric must be one of " + ", ".join(rules.METRICS))
+        if q.get("bucket") and q["bucket"] not in rules.BUCKETS: raise Err(400, "unknown age group")
+        try: as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
+        except ValueError: raise Err(400, "as_on must be YYYY-MM-DD")
+        credit = q.get("credit") if q.get("credit") in ("primary", "split") else "team"
+        rows = rules.drill(db.load_estimates(c), ym, as_on, credit, q.get("team") or None, metric, q.get("bucket") or None)
+        return {"month": ym, "as_on": min(rules.month_bounds(ym)[1], as_on).isoformat(), "credit": credit, "team": q.get("team") or None,
+                "metric": metric, "bucket": q.get("bucket") or None, "count": len(rows), "counted": sum(r["counted"] for r in rows), "rows": rows}
 
     def list_estimates(self, c, q):
         t = today(); out = []

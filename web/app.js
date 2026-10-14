@@ -106,8 +106,8 @@ async function openNotifications() {
 }
 
 /* ---------- dialog helper ---------- */
-function modal(title, body, footer, onOpen) {
-  const d = $("#dlg");
+function modal(title, body, footer, onOpen, wide) {
+  const d = $("#dlg"); d.className = wide ? "wide" : "";
   d.innerHTML = `<div class="hd"><h3>${title}</h3><button class="btn sm" id="dx" aria-label="Close">✕</button></div><div class="bd">${body}</div><div class="ft">${footer || ""}</div>`;
   $("#dx").onclick = () => d.close(); if (!d.open) d.showModal(); if (onOpen) onOpen(d); return d;
 }
@@ -132,17 +132,17 @@ async function dashboard(el) {
     ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
   ${(r.pending_drop_requests && can("finance")) || r.followups_needed || r.open_change_requests ? `<div class="attn">${r.open_change_requests ? `<button id="goCr">${r.open_change_requests} change request${r.open_change_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
   <div class="roll">
-    ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−", "good"], ["Dropped / written off", t.dropped, t.dropped_n, "−", "bad"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
-      .map(([l, v, n, op, tone]) => `<div class="k ${tone || ""}">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
+    ${[["Opening estimates", t.opening, t.opening_n, "", "", "opening"], ["New estimates raised", t.new, t.new_n, "+", "", "new"], ["Converted to tax invoice", t.converted, t.converted_n, "−", "good", "converted"], ["Dropped / written off", t.dropped, t.dropped_n, "−", "bad", "dropped"], ["Closing estimates (pending)", t.closing, t.closing_n, "=", "", "closing"]]
+      .map(([l, v, n, op, tone, metric]) => `<div class="k ${tone || ""}">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)} — click to list these estimates">${v ? `<button class="drill big" data-metric="${metric}" data-team="" data-v="${Math.round(v)}">₹ ${compact(v)}</button>` : `₹ ${compact(v)}`}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
   </div>
-  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a row to list exactly that row's pending estimates.</div>
+  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a number to list exactly the estimates behind it, or a name for that row's pending estimates.</div>
     <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th><th class="r">Opening</th><th class="r">+ New</th><th class="r conv">− Converted</th><th class="r drop">− Dropped</th><th class="r">Closing</th><th class="r">%</th></tr></thead><tbody>
-    ${r.teams.map(x => `<tr class="click" tabindex="0" data-team="${esc(x.team)}"><td>${teamHtml(x.team)}</td><td class="r num">${inr(x.opening)}</td><td class="r num">${inr(x.new)}</td><td class="r num conv${x.converted ? "" : " zero"}">${inr(x.converted)}</td><td class="r num drop${x.dropped ? "" : " zero"}">${inr(x.dropped)}</td><td class="r num"><b>${inr(x.closing)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td></tr>`).join("")}
-    <tr class="total"><td>Total</td><td class="r num">${inr(t.opening)}</td><td class="r num">${inr(t.new)}</td><td class="r num conv${t.converted ? "" : " zero"}">${inr(t.converted)}</td><td class="r num drop${t.dropped ? "" : " zero"}">${inr(t.dropped)}</td><td class="r num">${inr(t.closing)}</td><td class="r num">100%</td></tr></tbody></table></div></div>
-  <div class="card" style="margin-bottom:16px"><h3>Closing estimates — ageing by ${S.credit === "team" ? "team" : "sales manager"}</h3><div class="hint">What is still pending at the report date, grouped by days since the estimate date. Each row adds up to that row's Closing in the table above. Click a row to list its estimates.</div>
+    ${r.teams.map(x => `<tr><td><button class="drill name" data-pending="${esc(x.team)}" title="List this row's pending estimates">${teamHtml(x.team)}</button></td><td class="r num">${dv(x.opening, "opening", x.team)}</td><td class="r num">${dv(x.new, "new", x.team)}</td><td class="r num conv${x.converted ? "" : " zero"}">${dv(x.converted, "converted", x.team)}</td><td class="r num drop${x.dropped ? "" : " zero"}">${dv(x.dropped, "dropped", x.team)}</td><td class="r num"><b>${dv(x.closing, "closing", x.team)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td></tr>`).join("")}
+    <tr class="total"><td>Total</td><td class="r num">${dv(t.opening, "opening", "")}</td><td class="r num">${dv(t.new, "new", "")}</td><td class="r num conv${t.converted ? "" : " zero"}">${dv(t.converted, "converted", "")}</td><td class="r num drop${t.dropped ? "" : " zero"}">${dv(t.dropped, "dropped", "")}</td><td class="r num">${dv(t.closing, "closing", "")}</td><td class="r num">100%</td></tr></tbody></table></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>Closing estimates — ageing by ${S.credit === "team" ? "team" : "sales manager"}</h3><div class="hint">What is still pending at the report date, grouped by days since the estimate date. Each row adds up to that row's Closing in the table above. Click a number to list exactly those estimates, or a name for that row's pending estimates.</div>
     <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<th class="r"><i class="dot" style="background:${AGE_COLOR[i]}"></i>${b.replace("-", "–")} days</th>`).join("")}<th class="r">Total</th><th class="r">% of total</th><th>Mix</th></tr></thead><tbody>
-    ${r.teams.map(x => `<tr class="click" tabindex="0" data-team="${esc(x.team)}"><td>${teamHtml(x.team)}</td>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<td class="r num${x.ageing[b] && i > 1 ? " age" + i : ""}">${inr(x.ageing[b])}</td>`).join("")}<td class="r num"><b>${inr(x.closing)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
-    <tr class="total"><td>Total</td>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<td class="r num${t.ageing[b] && i > 1 ? " age" + i : ""}">${inr(t.ageing[b])}</td>`).join("")}<td class="r num">${inr(t.closing)}</td><td class="r num">100%</td><td></td></tr>
+    ${r.teams.map(x => `<tr><td><button class="drill name" data-pending="${esc(x.team)}" title="List this row's pending estimates">${teamHtml(x.team)}</button></td>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<td class="r num${x.ageing[b] && i > 1 ? " age" + i : ""}">${dv(x.ageing[b], "closing", x.team, b)}</td>`).join("")}<td class="r num"><b>${dv(x.closing, "closing", x.team)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
+    <tr class="total"><td>Total</td>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<td class="r num${t.ageing[b] && i > 1 ? " age" + i : ""}">${dv(t.ageing[b], "closing", "", b)}</td>`).join("")}<td class="r num">${dv(t.closing, "closing", "")}</td><td class="r num">100%</td><td></td></tr>
     <tr class="share"><td>Share of closing</td>${["0-30", "31-60", "61-90", "90+"].map(b => `<td class="r num">${nz(t.ageing[b], t.closing)}%</td>`).join("")}<td class="r num">100%</td><td></td><td></td></tr></tbody></table></div></div>
   <div class="grid g2" style="margin-bottom:16px">
     <div class="card"><h3>Conversions by month</h3><div class="hint">Estimates converted to tax invoices, by the month payment was received.</div><div id="trend"></div></div>
@@ -161,11 +161,31 @@ async function dashboard(el) {
   if ($("#goCr")) $("#goCr").onclick = () => { if (can("finance")) S.tab = "finance"; else { S.filters = { status: "pending", change_requested: "1" }; S.tab = "estimates"; } render(); };
   if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
-  activate(el, "tr[data-team]", tr => {            // show exactly what the row counts: that team only, not everyone who shares an estimate with them
-    const name = tr.dataset.team, mode = S.credit;
+  el.querySelectorAll("[data-metric]").forEach(b => b.onclick = () => drillDown({ metric: b.dataset.metric, team: b.dataset.team, who: b.dataset.who, bucket: b.dataset.bucket, v: b.dataset.v }).catch(e => toast(e.message)));
+  el.querySelectorAll("[data-pending]").forEach(b => b.onclick = () => {      // the name: that row's own pending estimates
+    const name = b.dataset.pending, mode = S.credit;
     S.filters = { status: "pending", ...(mode === "team" ? { team: name.split(" & ").join("|") } : mode === "primary" ? { primary: name } : { sm: name }) };
     S.tab = "estimates"; render();
   });
+}
+const keyOf = label => S.credit === "team" ? label.split(" & ").join("|") : label;          // how the server identifies a row
+const dv = (v, metric, team, bucket) => v ? `<button class="drill" data-metric="${metric}" data-team="${esc(team ? keyOf(team) : "")}" data-who="${esc(team || "")}"${bucket ? ` data-bucket="${bucket}"` : ""} data-v="${Math.round(v)}" title="Show these estimates">${inr(v)}</button>` : inr(v);
+const METRIC_LABEL = { opening: "Opening — pending on the 1st", new: "New this month", converted: "Converted (paid) this month", dropped: "Dropped this month", closing: "Closing — pending now" };
+async function drillDown(d) {
+  const qs = new URLSearchParams({ month: S.month, credit: S.credit, metric: d.metric, ...(d.team ? { team: d.team } : {}), ...(d.bucket ? { bucket: d.bucket } : {}) });
+  const r = await api("report/drill?" + qs), who = d.who || "All sales managers";
+  const label = d.bucket ? `Pending ${d.bucket.replace("-", "–")} days` : METRIC_LABEL[d.metric];
+  const note = x => d.metric === "converted" ? `Paid ${fdate(x.closed_on)}${x.invoice_no && x.invoice_no !== "(legacy)" ? " · " + esc(x.invoice_no) : ""}` : d.metric === "dropped" ? `Dropped ${fdate(x.closed_on)}` : d.metric === "new" ? `Raised ${fdate(x.est_date)}` : `${x.age} days old`;
+  const split = S.credit === "split" && d.team;
+  const match = d.v === undefined || Math.round(r.counted) === +d.v;
+  modal(`${esc(who)} — ${label}`, `<div class="drill-sum"><b class="num">${r.count} estimate${r.count === 1 ? "" : "s"} · ₹ ${inr(r.counted)}</b> <span class="muted">${fmonth(S.month)}, as on ${fdate(r.as_on)}${split ? " · each joint estimate shows this person's equal share" : ""}</span>
+    <span class="${match ? "ok" : "bad"}">${match ? "✓ adds up to the figure you clicked" : "⚠ does not match the figure you clicked (₹ " + inr(d.v) + ")"}</span></div>
+    <div class="scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th>${d.metric === "converted" ? "Payment" : d.metric === "dropped" ? "Dropped" : d.metric === "new" ? "Raised" : "Age"}</th></tr></thead><tbody>
+    ${r.rows.map(x => `<tr class="click" tabindex="0" data-id="${x.id}"><td>${esc(x.number)}</td><td>${fdate(x.est_date)}</td><td class="clip" title="${esc(x.customer)}">${esc(x.customer)}</td><td>${teamHtml(x.team)}</td>
+      <td><span class="fees">${x.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td>
+      <td class="r num">${inr(x.counted)}${split && x.share !== 1 ? `<div class="muted" style="font-size:11px">of ${inr(x.total)}</div>` : ""}</td><td>${note(x)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing.</td></tr>`}</tbody>
+    <tfoot><tr class="total"><td colspan="5">Total</td><td class="r num">${inr(r.counted)}</td><td></td></tr></tfoot></table></div>`,
+    `<button class="btn primary" id="cx">Close</button>`, dlg => { $("#cx").onclick = closeModal; activate(dlg, "tr[data-id]", tr => detail(+tr.dataset.id)); }, true);
 }
 function ageBar(ag, tot, name) {
   if (!tot) return "";

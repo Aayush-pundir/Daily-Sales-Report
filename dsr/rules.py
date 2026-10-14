@@ -175,6 +175,53 @@ def validate_estimate(d, sm_names, today, allowed_owner=None):
     return c, errs
 
 
+def estimate_events(e, month, start, end):
+    """Which dashboard columns an estimate falls into for `month`, as of `end`.
+    An estimate belongs to the report month (`period`) it was booked in; that can differ from its date
+    (e.g. raised on 8 Oct but filed under September), as in the legacy Reporting sheet."""
+    per = e["period"] or e["est_date"][:7]
+    if per > month: return []
+    cl = parse_date(e["closed_on"]) if e["status"] != "pending" else None
+    ev = []
+    if per < month and (cl is None or cl >= start): ev.append("opening")
+    if per == month: ev.append("new")
+    if cl and start <= cl <= end: ev.append("converted" if e["status"] == "received" else "dropped")
+    if cl is None or cl > end: ev.append("closing")
+    return ev
+
+
+def credit_keys(e, credit):
+    """Rows an estimate counts towards, and the share each gets. The first name is the primary salesperson."""
+    names = e["owners"].split("|")
+    keys = {"team": [e["owners"]], "primary": names[:1], "split": names}[credit]
+    return keys, (1 / len(keys) if credit == "split" else 1)
+
+
+METRICS = ("opening", "new", "converted", "dropped", "closing")
+
+
+def drill(estimates, month, as_on, credit, key, metric, age_bucket=None):
+    """The estimates behind one number on the dashboard (same rules as build_report, so the list always adds up to it).
+    key=None means all sales managers; age_bucket narrows 'closing' to one ageing column."""
+    start, mend = month_bounds(month)
+    end = min(mend, as_on)
+    out = []
+    for e in estimates:
+        if metric not in estimate_events(e, month, start, end): continue
+        keys, w = credit_keys(e, credit)
+        if key and key not in keys: continue
+        age = (end - parse_date(e["est_date"])).days
+        b = bucket(age)
+        if age_bucket and (metric != "closing" or b != age_bucket): continue
+        total = sum(l["amount"] for l in e["lines"])
+        if not key: w = 1          # across everyone, a split estimate counts in full (its shares add back up to 100%)
+        out.append({"id": e["id"], "number": e["number"], "customer": e["customer"], "owners": e["owners"], "team": team_label(e["owners"]),
+                    "est_date": e["est_date"], "period": e["period"], "status": e["status"], "closed_on": e["closed_on"], "invoice_no": e.get("invoice_no"),
+                    "categories": [l["category"] for l in e["lines"]], "total": total, "counted": total * w, "share": w, "age": age, "bucket": b})
+    out.sort(key=lambda r: (-r["counted"], r["number"]))
+    return out
+
+
 def build_report(estimates, month, as_on, credit="team"):
     """estimates: dicts with number, est_date, owners, status, closed_on, lines[{category, amount}].
     Roll-forward per workbook: Opening + New - Converted - Dropped = Closing (pending)."""
@@ -190,20 +237,9 @@ def build_report(estimates, month, as_on, credit="team"):
     top_pending = []
     for e in estimates:
         ed = parse_date(e["est_date"])
-        cl = parse_date(e["closed_on"]) if e["status"] != "pending" else None
         amount = sum(l["amount"] for l in e["lines"])
-        names = e["owners"].split("|")   # first name is the primary salesperson
-        keys = {"team": [e["owners"]], "primary": names[:1], "split": names}[credit]
-        w = 1 / len(keys) if credit == "split" else 1
-        events = []
-        # An estimate belongs to the report month (`period`) it was booked in; that can differ from
-        # its date (e.g. raised on 8 Oct but filed under September), as in the legacy Reporting sheet.
-        per = e["period"] or e["est_date"][:7]
-        if per > month: continue
-        if per < month and (cl is None or cl >= start): events.append("opening")
-        if per == month: events.append("new")
-        if cl and start <= cl <= end: events.append("converted" if e["status"] == "received" else "dropped")
-        if cl is None or cl > end: events.append("closing")
+        keys, w = credit_keys(e, credit)
+        events = estimate_events(e, month, start, end)
         if not events: continue
         for ev in events:
             for k in keys:

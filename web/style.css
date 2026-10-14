@@ -153,3 +153,13 @@ tr.share td{color:var(--ink2);font-size:13px;border-top:1px dashed var(--line)}
 th.conv{color:var(--good)}th.drop{color:var(--bad)}
 td.conv{color:var(--good);font-weight:600}td.drop{color:var(--bad);font-weight:600}
 td.conv.zero,td.drop.zero{color:var(--ink3);font-weight:400}
+/* click-through figures */
+.drill{background:none;border:0;padding:1px 5px;margin:-1px -5px;font:inherit;color:inherit;cursor:pointer;border-radius:5px;font-variant-numeric:tabular-nums;text-align:inherit}
+.drill:hover{background:var(--idle-bg);text-decoration:underline;text-underline-offset:3px}
+.drill:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.drill.name{font-weight:inherit}.drill.name:hover{text-decoration:none;background:var(--idle-bg)}
+.drill.big{font-size:inherit;font-weight:inherit;letter-spacing:inherit;padding:0 6px;margin:0 -6px}
+dialog.wide{width:min(1080px,calc(100vw - 48px))}
+.drill-sum{display:flex;gap:6px 16px;flex-wrap:wrap;align-items:baseline;margin-bottom:12px}
+.drill-sum .ok{color:var(--good);font-size:13px}.drill-sum .bad{color:var(--bad);font-size:13px;font-weight:600}
+dialog tfoot tr.total td{font-weight:650;border-top:2px solid var(--ink3);border-bottom:0}
