@@ -311,7 +311,8 @@ The bar chart counts estimates by the month **payment was received**. It starts 
 | `PORT` | `8080` | Port to listen on |
 | `HOST` | `127.0.0.1` | Use `0.0.0.0` to allow other computers to connect |
 | `DSR_DB` | `data/dsr.sqlite3` | Where the database file lives (uploaded files go in a `files/` folder beside it) |
-| `DSR_ADMIN_PASSWORD` | random | Password for the first `admin` account (otherwise a random one is printed once on first run) |
+| `DSR_PASSWORDLESS` | on for localhost | `1` = quick sign-in (click a name, **no password**); `0` = passwords required. If not set, quick sign-in is on **only** when the server listens on this computer alone (`HOST` is `127.0.0.1`/`localhost`, the default) and switches itself **off** when `HOST` opens it to the network. |
+| `DSR_ADMIN_PASSWORD` | random | Password for the first `admin` account. Only needed for password sign-in. |
 | `DSR_TODAY` | today | Pretend today is this date (`YYYY-MM-DD`) — for testing only |
 
 ---
@@ -443,6 +444,7 @@ erDiagram
 
 ### Security in brief
 - Passwords are **hashed** (scrypt), never stored as typed. Sign-in uses an HTTP-only, same-site cookie.
+- **Quick sign-in** (click a name, no password) exists for trying the app on your own computer. It is **automatically disabled** when the server is opened to the network, unless you force it with `DSR_PASSWORDLESS=1`.
 - API keys are shown **once**; only a hash is stored; keys can be revoked.
 - Every action is permission-checked **on the server** (hiding a button is never the only protection).
 - Uploaded files are stored with random names and served only to signed-in users, with a safe file type.
@@ -481,10 +483,12 @@ Python **3.10 or newer**. Nothing else. (Optional: `pip install openpyxl` to rea
 python3 -m dsr
 # open http://localhost:8080
 ```
-On the **first run** the screen prints the password for the `admin` user (or set `DSR_ADMIN_PASSWORD` before starting). Sign in as `admin`, then open **Admin** to:
-1. add the **sales managers** (names as they appear on estimates),
-2. add **users** — a *sales* user is linked to one sales manager; *finance* users are not linked,
+**Signing in — no password on your own computer.** When the server runs on your own computer (the default), the sign-in page simply shows everyone's name: **click your name and you are in.** On first run the only name is *Administrator*. Then open **Admin** to:
+1. add the **sales managers** (the import adds them for you),
+2. add **users**: press **Create logins for all sales managers** for a one-click start, and **+ Add user** for your finance people (a *sales* user is linked to one sales manager; *finance* users are not linked),
 3. (optional) create an **API key** and set the **webhook** for the CRM.
+
+> ⚠ **Quick sign-in means anyone who can open the page can pick any name — including Administrator.** That is fine for trying it out on your own computer. It **turns itself off** automatically if you start the server so that other computers can reach it (`HOST=0.0.0.0`), and then everyone needs a password (the first-run admin password is printed in the terminal, and the Admin tab can add password users). Before sharing it with the team, run with `DSR_PASSWORDLESS=0` and give each person a password.
 
 ### Load the old Excel (one time)
 ```bash
@@ -524,7 +528,7 @@ python3 -m unittest discover -s tests -t .
 - **No email sending.** The dashboard is live; Finance can publish a frozen copy. (A daily email linking to it is an easy add-on.)
 - **No part-payments** — payment is in full, by design.
 - **No automatic scheduling** of "Publish today's report" (it is a button).
-- **No HTTPS, login lock-out or password reset** built in (see Security).
+- **No HTTPS, login lock-out or password reset** built in (see Security). Quick sign-in has no passwords at all and is meant for your own computer only.
 - **Notifications are in the app**, not by email or phone push.
 - **Desktop only** — no phone layout.
 - **Imported history before the import month is approximate** (see section 12).
@@ -556,7 +560,7 @@ Check the estimate's **Report month**. The app counts an estimate in its report 
 Calls only count once they are **logged**. Open the estimate (or the board card) → **Log follow-up**.
 
 **"I can't sign in / the page keeps asking me to sign in."**
-Sessions last 7 days. If the server was restarted with a different database file, the old sign-in is gone — sign in again.
+Sessions last 7 days. If the server was restarted with a different database file, the old sign-in is gone — sign in again. If you expected to just click a name but see a password form, the server is open to the network (`HOST=0.0.0.0`) so quick sign-in is off; use the admin password printed at first run, or start it with `DSR_PASSWORDLESS=1` if you really want it.
 
 **"The notification badge didn't appear."**
 It refreshes about every 20 seconds while the tab is visible. Click the 🔔 to refresh immediately.

@@ -18,6 +18,15 @@ def today():
     return date.fromisoformat(os.environ["DSR_TODAY"]) if os.environ.get("DSR_TODAY") else date.today()
 
 
+def passwordless():
+    """Quick sign-in (click a name, no password). On by default only when the server listens on this computer
+    alone; set DSR_PASSWORDLESS=1 / 0 to force it on / off."""
+    v = os.environ.get("DSR_PASSWORDLESS", "").lower()
+    if v in ("1", "true", "yes", "on"): return True
+    if v in ("0", "false", "no", "off"): return False
+    return os.environ.get("HOST", "127.0.0.1") in ("127.0.0.1", "localhost", "::1")
+
+
 class Err(Exception):
     def __init__(self, code, msg, extra=None):
         self.code, self.msg, self.extra = code, msg, extra or {}
@@ -104,6 +113,8 @@ class H(BaseHTTPRequestHandler):
                 try:
                     user = self.user_for(c)
                     if u.path == "/api/login" and method == "POST": res = self.login(c, body)
+                    elif u.path == "/api/quick-users" and method == "GET": res = self.quick_users(c)
+                    elif u.path == "/api/quick-login" and method == "POST": res = self.quick_login(c, body)
                     else:
                         if not user: raise Err(401, "Please sign in.")
                         res = self.route(c, method, u.path, q, body, user)
@@ -119,13 +130,28 @@ class H(BaseHTTPRequestHandler):
     do_PUT = lambda s: s.handle_any("PUT")
 
     # ---- auth
+    def _session(self, c, user_id):
+        tok = secrets.token_urlsafe(32)
+        c.execute("INSERT INTO sessions VALUES(?,?,?)", (tok, user_id, (datetime.now() + timedelta(days=7)).isoformat(timespec="seconds")))
+        c.execute("DELETE FROM sessions WHERE expires<?", (db.now(),))
+        return {"ok": True}, "application/json", [("Set-Cookie", f"sid={tok}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800")]
+
     def login(self, c, b):
         r = c.execute("SELECT * FROM users WHERE username=? AND active=1", (str(b.get("username", "")).strip().lower(),)).fetchone()
         if not r or not db.check_pw(str(b.get("password", "")), r["pw"]): raise Err(401, "Wrong username or password.")
-        tok = secrets.token_urlsafe(32)
-        c.execute("INSERT INTO sessions VALUES(?,?,?)", (tok, r["id"], (datetime.now() + timedelta(days=7)).isoformat(timespec="seconds")))
-        c.execute("DELETE FROM sessions WHERE expires<?", (db.now(),))
-        return {"ok": True}, "application/json", [("Set-Cookie", f"sid={tok}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800")]
+        return self._session(c, r["id"])
+
+    def quick_users(self, c):
+        """Quick sign-in: pick a name, no password. Only offered when passwordless() is true."""
+        if not passwordless(): return {"enabled": False, "users": []}
+        return {"enabled": True, "users": [dict(r) for r in c.execute(
+            "SELECT id,name,role,sm_name FROM users WHERE active=1 ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'finance' THEN 1 ELSE 2 END, name")]}
+
+    def quick_login(self, c, b):
+        if not passwordless(): raise Err(403, "Quick sign-in is switched off on this server.")
+        r = c.execute("SELECT id FROM users WHERE id=? AND active=1", (b.get("user_id"),)).fetchone()
+        if not r: raise Err(404, "No such user.")
+        return self._session(c, r["id"])
 
     # ---- routing
     def route(self, c, m, path, q, b, user):
@@ -496,6 +522,17 @@ class H(BaseHTTPRequestHandler):
                 c.execute("INSERT OR REPLACE INTO settings VALUES('webhook_url',?)", (url,))
                 if b.get("secret"): c.execute("INSERT OR REPLACE INTO settings VALUES('webhook_secret',?)", (b["secret"],))
             return {"url": (c.execute("SELECT v FROM settings WHERE k='webhook_url'").fetchone() or [""])[0], "has_secret": bool(c.execute("SELECT 1 FROM settings WHERE k='webhook_secret'").fetchone())}
+        if P == ["users", "bulk-sales"] and m == "POST":
+            if user["role"] != "admin": raise Err(403, "Admins only.")
+            made = []
+            for sm in c.execute("SELECT name FROM sms WHERE active=1 ORDER BY name").fetchall():
+                if c.execute("SELECT 1 FROM users WHERE role='sales' AND sm_name=?", (sm["name"],)).fetchone(): continue
+                base = re.sub(r"[^a-z0-9]+", ".", sm["name"].lower()).strip(".")[:28] or "sales"
+                uname, n = base, 1
+                while c.execute("SELECT 1 FROM users WHERE username=?", (uname,)).fetchone(): n += 1; uname = f"{base}{n}"
+                c.execute("INSERT INTO users(username,name,pw,role,sm_name) VALUES(?,?,?,?,?)", (uname, sm["name"], db.hash_pw(secrets.token_urlsafe(12)), "sales", sm["name"]))
+                made.append(sm["name"])
+            return {"created": made}
         if user["role"] != "admin":
             if P[0] == "users" and m == "GET": raise Err(403, "Admins only.")
             if P[0] == "sms" and m == "GET": return [dict(r) for r in c.execute("SELECT * FROM sms ORDER BY name")]
@@ -533,7 +570,9 @@ def bootstrap():
     if not c.execute("SELECT 1 FROM users").fetchone():
         pw = os.environ.get("DSR_ADMIN_PASSWORD") or secrets.token_urlsafe(9)
         c.execute("INSERT INTO users(username,name,pw,role) VALUES('admin','Administrator',?, 'admin')", (db.hash_pw(pw),))
-        c.commit(); print(f"\n  First run: sign in as  admin  /  {pw}   (create real users from the Admin tab)\n")
+        c.commit()
+        if passwordless(): print("\n  First run: just click  Administrator  on the sign-in page, then add your people in the Admin tab.\n")
+        else: print(f"\n  First run: sign in as  admin  /  {pw}   (create real users from the Admin tab)\n")
     c.close()
 
 
@@ -541,6 +580,7 @@ def main():
     bootstrap()
     port = int(os.environ.get("PORT", 8080))
     print(f"Daily Sales Report on http://localhost:{port}")
+    print("Sign-in: " + ("QUICK (click a name, no password) — only because this server is reachable from this computer alone" if passwordless() else "password"))
     ThreadingHTTPServer((os.environ.get("HOST", "127.0.0.1"), port), H).serve_forever()
 
 

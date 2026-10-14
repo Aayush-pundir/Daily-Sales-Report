@@ -131,3 +131,11 @@ ul.notes li{padding:10px 8px 10px 14px;border-bottom:1px solid var(--line);posit
 ul.notes li.unread{background:color-mix(in srgb,var(--accent) 8%,transparent)}
 ul.notes li.unread:before{content:"";position:absolute;left:3px;top:17px;width:7px;height:7px;border-radius:50%;background:var(--accent)}
 ul.notes .muted{font-size:12px}.n-act{margin-top:6px}
+/* quick sign-in */
+.login.wide{max-width:680px}
+.login .grp{font-size:12px;font-weight:600;color:var(--ink2);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 8px}
+.people{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.person{display:flex;gap:12px;align-items:center;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer}
+.person:hover{border-color:var(--accent)}.person:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.av{display:grid;place-items:center;width:38px;height:38px;border-radius:50%;font-weight:600;color:#fff;background:var(--s1);flex:none}
+.av.finance{background:var(--s3)}.av.admin{background:var(--s2)}

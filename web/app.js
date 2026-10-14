@@ -14,7 +14,7 @@ const S = { unread: 0, me: null, meta: null, tab: "dashboard", month: null, cred
 
 async function api(path, opt = {}) {
   const r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined });
-  if (r.status === 401 && path !== "login") { S.me = null; render(); throw new Error("Please sign in."); }
+  if (r.status === 401 && path !== "login" && path !== "quick-login") { S.me = null; render(); throw new Error("Please sign in."); }
   const ct = r.headers.get("Content-Type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();
   if (!r.ok) { const e = new Error(data.error || "Request failed"); e.status = r.status; e.data = data; throw e; }
@@ -44,21 +44,35 @@ function render() {
   if (can("finance")) tabs.push(["finance", "Finance desk"]);
   tabs.push(["history", "Reports"], ["rules", "Rules"]);
   if (S.me.role === "admin") tabs.push(["admin", "Admin"]);
+  if (!tabs.some(t => t[0] === S.tab)) S.tab = "dashboard";          // e.g. someone else signed in on this page before
   app.innerHTML = `<header class="top"><span class="brand">Daily Sales Report</span>
     <nav>${tabs.map(([k, l]) => `<button data-tab="${k}" ${S.tab === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
     <button class="bell" id="bell" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="badge" id="badge" ${S.unread ? "" : "hidden"}>${S.unread}</span></button><span class="who">${esc(S.me.name)} · ${esc(S.me.role)}${S.me.sm_name ? " (" + esc(S.me.sm_name) + ")" : ""}<button class="btn sm" id="out">Sign out</button></span></header>
     <main id="main"></main>`;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   $("#bell").onclick = openNotifications; pollNotifications(true);
-  $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; render(); };
+  $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; S.tab = "dashboard"; S.fu = null; S.filters = { status: "pending" }; S.unread = 0; render(); };
   ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, rules: rulesTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
 }
-function renderLogin(app) {
-  app.innerHTML = `<div class="login"><h1 style="margin-bottom:14px">Daily Sales Report</h1><form class="card" id="lf">
-    <label class="f">Username<input name="u" autocomplete="username" required autofocus></label>
-    <label class="f">Password<input name="p" type="password" autocomplete="current-password" required></label>
-    <div id="le"></div><button class="btn primary">Sign in</button></form></div>`;
-  $("#lf").onsubmit = async e => {
+async function renderLogin(app) {
+  $("#toast").style.display = "none";
+  let quick = { enabled: false, users: [] };
+  try { quick = await (await fetch("/api/quick-users")).json(); } catch { /* fall back to the password form */ }
+  const passwordForm = `<form class="card" id="lf"><label class="f">Username<input name="u" autocomplete="username" required></label>
+    <label class="f">Password<input name="p" type="password" autocomplete="current-password" required></label><div id="le"></div><button class="btn primary">Sign in</button></form>`;
+  const initials = n => n.split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+  const ROLE = { admin: "Administrator", finance: "Finance", sales: "Sales" };
+  app.innerHTML = quick.enabled && quick.users.length
+    ? `<div class="login wide"><h1 style="margin-bottom:4px">Daily Sales Report</h1><p class="muted" style="margin:0 0 16px">Click your name to continue.</p>
+       ${["admin", "finance", "sales"].map(r => { const us = quick.users.filter(u => u.role === r); return us.length ? `<div class="grp">${ROLE[r]}</div><div class="people">${us.map(u => `<button class="person" data-uid="${u.id}"><span class="av ${r}">${esc(initials(u.name))}</span><span><b>${esc(u.name)}</b><br><span class="muted">${esc(ROLE[r])}${u.sm_name ? " · " + esc(u.sm_name) : ""}</span></span></button>`).join("")}</div>` : ""; }).join("")}
+       <div id="le"></div><details style="margin-top:18px"><summary class="muted" style="cursor:pointer">Sign in with a password instead</summary><div style="margin-top:10px">${passwordForm}</div></details>
+       <p class="muted" style="font-size:12px;margin-top:18px">Quick sign-in is on because this server is only reachable from this computer. Anyone who can open this page can pick any name, so turn it off before sharing it (see the README).</p></div>`
+    : `<div class="login"><h1 style="margin-bottom:14px">Daily Sales Report</h1>${passwordForm}</div>`;
+  app.querySelectorAll("[data-uid]").forEach(b => b.onclick = async () => {
+    try { await api("quick-login", { method: "POST", body: { user_id: +b.dataset.uid } }); await boot(); }
+    catch (er) { $("#le").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
+  });
+  if ($("#lf")) $("#lf").onsubmit = async e => {
     e.preventDefault();
     try { await api("login", { method: "POST", body: { username: e.target.u.value, password: e.target.p.value } }); await boot(); }
     catch (er) { $("#le").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
@@ -425,7 +439,7 @@ async function admin(el) {
   el.innerHTML = `<div class="bar"><h2>Admin</h2></div><div class="grid g2">
   <div class="card"><h3>Users</h3><div class="hint">Sales users are linked to one sales manager.</div><div class="scroll"><table><thead><tr><th>User</th><th>Role</th><th>Linked SM</th><th></th></tr></thead><tbody>
     ${users.map(u => `<tr><td>${esc(u.name)} <span class="muted">${esc(u.username)}</span></td><td>${u.role}</td><td>${esc(u.sm_name || "")}</td><td>${u.active ? "" : '<span class="pill dropped">inactive</span> '}<button class="btn sm" data-u="${u.id}">Edit</button></td></tr>`).join("")}</tbody></table></div>
-    <button class="btn primary" id="nu" style="margin-top:12px">+ Add user</button></div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn primary" id="nu">+ Add user</button><button class="btn" id="bulk" title="Creates a sales login for every sales manager who doesn't have one yet">Create logins for all sales managers</button></div></div>
   <div class="card"><h3>Sales managers</h3><div class="hint">Deactivate someone who has left: history is kept, but they can't be picked on new estimates.</div>
     <div class="scroll"><table><tbody>${sms.map(s => `<tr><td>${esc(s.name)}</td><td class="r"><button class="btn sm" data-sm="${esc(s.name)}" data-on="${s.active ? 0 : 1}">${s.active ? "Deactivate" : "Reactivate"}</button></td></tr>`).join("")}</tbody></table></div>
     <form id="asm" class="bar" style="margin:12px 0 0"><label class="f">New sales manager<input name="n" required></label><button class="btn">Add</button></form></div>
@@ -453,6 +467,7 @@ async function admin(el) {
         try { await api("users", { method: u ? "PUT" : "POST", body }); closeModal(); toast("Saved"); render(); } catch (er) { $("#ee").innerHTML = `<div class="err">${esc(er.message)}</div>`; } };
     });
   $("#nu").onclick = () => userForm();
+  $("#bulk").onclick = async () => { try { const r = await api("users/bulk-sales", { method: "POST", body: {} }); toast(r.created.length ? `Created ${r.created.length} sales login${r.created.length > 1 ? "s" : ""}` : "Every sales manager already has a login"); render(); } catch (er) { toast(er.message); } };
   el.querySelectorAll("[data-u]").forEach(b => b.onclick = () => userForm(users.find(u => u.id == b.dataset.u)));
 }
 boot();
