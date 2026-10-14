@@ -26,4 +26,13 @@ class Parse(unittest.TestCase):
     def test_missing_columns(self):
         with self.assertRaises(ValueError): uploads.parse("a.csv", b"a,b\n1,2\n", set(), date(2026, 10, 13), None, set())
 
+class FreshInstall(unittest.TestCase):
+    def test_database_folder_is_created(self):
+        import os, tempfile
+        from dsr import db
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "does", "not", "exist", "x.sqlite3")
+            db.connect(p).close()
+            self.assertTrue(os.path.isfile(p))
+
 if __name__ == "__main__": unittest.main()

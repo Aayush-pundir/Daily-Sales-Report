@@ -13,8 +13,10 @@ const AGE_COLOR = ["var(--a0)", "var(--a1)", "var(--a2)", "var(--a3)"];
 const S = { unread: 0, me: null, meta: null, tab: "dashboard", month: null, credit: "team", filters: { status: "pending" } };
 
 async function api(path, opt = {}) {
-  const r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined });
-  if (r.status === 401 && path !== "login") { S.me = null; render(); throw new Error("Please sign in."); }
+  let r;
+  try { r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined }); }
+  catch { throw new Error("Can't reach the app. Check that the Terminal window running “python3 -m dsr” is still open (if not, start it again), then refresh this page."); }
+  if (r.status === 401 && path !== "login" && path !== "quick-login") { S.me = null; render(); throw new Error("Please sign in."); }
   const ct = r.headers.get("Content-Type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();
   if (!r.ok) { const e = new Error(data.error || "Request failed"); e.status = r.status; e.data = data; throw e; }
@@ -42,23 +44,36 @@ function render() {
   if (!S.me) return renderLogin(app);
   const tabs = [["dashboard", "Dashboard"], ["estimates", "Estimates"], ["followups", "Follow-ups"]];
   if (can("finance")) tabs.push(["finance", "Finance desk"]);
-  tabs.push(["history", "Reports"], ["rules", "Rules"]);
   if (S.me.role === "admin") tabs.push(["admin", "Admin"]);
+  if (!tabs.some(t => t[0] === S.tab)) S.tab = "dashboard";          // e.g. someone else signed in on this page before
   app.innerHTML = `<header class="top"><span class="brand">Daily Sales Report</span>
     <nav>${tabs.map(([k, l]) => `<button data-tab="${k}" ${S.tab === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
     <button class="bell" id="bell" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="badge" id="badge" ${S.unread ? "" : "hidden"}>${S.unread}</span></button><span class="who">${esc(S.me.name)} · ${esc(S.me.role)}${S.me.sm_name ? " (" + esc(S.me.sm_name) + ")" : ""}<button class="btn sm" id="out">Sign out</button></span></header>
     <main id="main"></main>`;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   $("#bell").onclick = openNotifications; pollNotifications(true);
-  $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; render(); };
-  ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, rules: rulesTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
+  $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; S.tab = "dashboard"; S.fu = null; S.filters = { status: "pending" }; S.unread = 0; render(); };
+  ({ dashboard, estimates, followups: followupsTab, finance, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
 }
-function renderLogin(app) {
-  app.innerHTML = `<div class="login"><h1 style="margin-bottom:14px">Daily Sales Report</h1><form class="card" id="lf">
-    <label class="f">Username<input name="u" autocomplete="username" required autofocus></label>
-    <label class="f">Password<input name="p" type="password" autocomplete="current-password" required></label>
-    <div id="le"></div><button class="btn primary">Sign in</button></form></div>`;
-  $("#lf").onsubmit = async e => {
+async function renderLogin(app) {
+  $("#toast").style.display = "none";
+  let quick = { enabled: false, users: [] };
+  try { quick = await (await fetch("/api/quick-users")).json(); } catch { /* fall back to the password form */ }
+  const passwordForm = `<form class="card" id="lf"><label class="f">Username<input name="u" autocomplete="username" required></label>
+    <label class="f">Password<input name="p" type="password" autocomplete="current-password" required></label><div id="le"></div><button class="btn primary">Sign in</button></form>`;
+  const initials = n => n.split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+  const ROLE = { admin: "Administrator", finance: "Finance", sales: "Sales" };
+  app.innerHTML = quick.enabled && quick.users.length
+    ? `<div class="login wide"><h1 style="margin-bottom:4px">Daily Sales Report</h1><p class="muted" style="margin:0 0 16px">Click your name to continue.</p>
+       ${["admin", "finance", "sales"].map(r => { const us = quick.users.filter(u => u.role === r); return us.length ? `<div class="grp">${ROLE[r]}</div><div class="people">${us.map(u => `<button class="person" data-uid="${u.id}"><span class="av ${r}">${esc(initials(u.name))}</span><span><b>${esc(u.name)}</b><br><span class="muted">${esc(ROLE[r])}${u.sm_name ? " · " + esc(u.sm_name) : ""}</span></span></button>`).join("")}</div>` : ""; }).join("")}
+       <div id="le"></div><details style="margin-top:18px"><summary class="muted" style="cursor:pointer">Sign in with a password instead</summary><div style="margin-top:10px">${passwordForm}</div></details>
+       <p class="muted" style="font-size:12px;margin-top:18px">Quick sign-in is on because this server is only reachable from this computer. Anyone who can open this page can pick any name, so turn it off before sharing it (see the README).</p></div>`
+    : `<div class="login"><h1 style="margin-bottom:14px">Daily Sales Report</h1>${passwordForm}</div>`;
+  app.querySelectorAll("[data-uid]").forEach(b => b.onclick = async () => {
+    try { await api("quick-login", { method: "POST", body: { user_id: +b.dataset.uid } }); await boot(); }
+    catch (er) { $("#le").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
+  });
+  if ($("#lf")) $("#lf").onsubmit = async e => {
     e.preventDefault();
     try { await api("login", { method: "POST", body: { username: e.target.u.value, password: e.target.p.value } }); await boot(); }
     catch (er) { $("#le").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
@@ -90,8 +105,8 @@ async function openNotifications() {
 }
 
 /* ---------- dialog helper ---------- */
-function modal(title, body, footer, onOpen) {
-  const d = $("#dlg");
+function modal(title, body, footer, onOpen, wide) {
+  const d = $("#dlg"); d.className = wide ? "wide" : "";
   d.innerHTML = `<div class="hd"><h3>${title}</h3><button class="btn sm" id="dx" aria-label="Close">✕</button></div><div class="bd">${body}</div><div class="ft">${footer || ""}</div>`;
   $("#dx").onclick = () => d.close(); if (!d.open) d.showModal(); if (onOpen) onOpen(d); return d;
 }
@@ -106,41 +121,72 @@ function monthOptions() {
 async function dashboard(el) {
   const r = await api(`report?month=${S.month}&credit=${S.credit}`);
   const t = r.total, nz = (a, b) => b ? Math.round(a / b * 100) : 0;
-  const lastPub = r.last_published;
   el.innerHTML = `
   <div class="bar"><div style="margin-right:auto"><h2>Report as on ${fdate(r.as_on)}</h2>
-      <div class="sub">${lastPub ? `Last published ${fdate(lastPub.day)} by ${esc(lastPub.published_by)}` : "Not yet published"} · amounts are estimate sub-totals (before tax)</div></div>
+      <div class="sub">Amounts are estimate sub-totals (before tax)</div></div>
     <label class="f">Month<select id="mon">${monthOptions().map(m => `<option value="${m}" ${m === S.month ? "selected" : ""}>${fmonth(m)}</option>`).join("")}</select></label>
     <label class="f">Credit<select id="split"><option value="team">Team, primary first</option><option value="primary" ${S.credit === "primary" ? "selected" : ""}>Primary salesperson only</option><option value="split" ${S.credit === "split" ? "selected" : ""}>Split equally</option></select></label>
     <a class="btn" href="/api/export.csv" download>Export CSV</a>
-    ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
+</div>
   ${(r.pending_drop_requests && can("finance")) || r.followups_needed || r.open_change_requests ? `<div class="attn">${r.open_change_requests ? `<button id="goCr">${r.open_change_requests} change request${r.open_change_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
   <div class="roll">
-    ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−"], ["Dropped / written off", t.dropped, t.dropped_n, "−"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
-      .map(([l, v, n, op]) => `<div class="k">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
+    ${[["Opening estimates", t.opening, t.opening_n, "", "", "opening"], ["New estimates raised", t.new, t.new_n, "+", "", "new"], ["Converted to tax invoice", t.converted, t.converted_n, "−", "good", "converted"], ["Dropped / written off", t.dropped, t.dropped_n, "−", "bad", "dropped"], ["Closing estimates (pending)", t.closing, t.closing_n, "=", "", "closing"]]
+      .map(([l, v, n, op, tone, metric]) => `<div class="k ${tone || ""}">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)} — click to list these estimates">${v ? `<button class="drill big" data-metric="${metric}" data-team="" data-v="${Math.round(v)}">₹ ${compact(v)}</button>` : `₹ ${compact(v)}`}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
   </div>
+  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a number to list the estimates behind it, or a name for that row's pending estimates.</div>
+    <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th><th class="r">Opening</th><th class="r">+ New</th><th class="r conv">− Converted</th><th class="r drop">− Dropped</th><th class="r">Closing</th><th class="r">%</th></tr></thead><tbody>
+    ${r.teams.map(x => `<tr><td><button class="drill name" data-pending="${esc(x.team)}" title="List this row's pending estimates">${teamHtml(x.team)}</button></td><td class="r num">${dv(x.opening, "opening", x.team)}</td><td class="r num">${dv(x.new, "new", x.team)}</td><td class="r num conv${x.converted ? "" : " zero"}">${dv(x.converted, "converted", x.team)}</td><td class="r num drop${x.dropped ? "" : " zero"}">${dv(x.dropped, "dropped", x.team)}</td><td class="r num"><b>${dv(x.closing, "closing", x.team)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td></tr>`).join("")}
+    <tr class="total"><td>Total</td><td class="r num">${dv(t.opening, "opening", "")}</td><td class="r num">${dv(t.new, "new", "")}</td><td class="r num conv${t.converted ? "" : " zero"}">${dv(t.converted, "converted", "")}</td><td class="r num drop${t.dropped ? "" : " zero"}">${dv(t.dropped, "dropped", "")}</td><td class="r num">${dv(t.closing, "closing", "")}</td><td class="r num">100%</td></tr></tbody></table></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>Closing estimates — ageing by ${S.credit === "team" ? "team" : "sales manager"}</h3><div class="hint">Pending at the report date, by days since the estimate date. Each row adds up to its Closing above. Click a number to list those estimates, or a name for that row's pending estimates.</div>
+    <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<th class="r"><i class="dot" style="background:${AGE_COLOR[i]}"></i>${b.replace("-", "–")} days</th>`).join("")}<th class="r">Total</th><th class="r">% of total</th><th>Mix</th></tr></thead><tbody>
+    ${r.teams.map(x => `<tr><td><button class="drill name" data-pending="${esc(x.team)}" title="List this row's pending estimates">${teamHtml(x.team)}</button></td>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<td class="r num${x.ageing[b] && i > 1 ? " age" + i : ""}">${dv(x.ageing[b], "closing", x.team, b)}</td>`).join("")}<td class="r num"><b>${dv(x.closing, "closing", x.team)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
+    <tr class="total"><td>Total</td>${["0-30", "31-60", "61-90", "90+"].map((b, i) => `<td class="r num${t.ageing[b] && i > 1 ? " age" + i : ""}">${dv(t.ageing[b], "closing", "", b)}</td>`).join("")}<td class="r num">${dv(t.closing, "closing", "")}</td><td class="r num">100%</td><td></td></tr>
+    <tr class="share"><td>Share of closing</td>${["0-30", "31-60", "61-90", "90+"].map(b => `<td class="r num">${nz(t.ageing[b], t.closing)}%</td>`).join("")}<td class="r num">100%</td><td></td><td></td></tr></tbody></table></div></div>
   <div class="grid g2" style="margin-bottom:16px">
     <div class="card"><h3>Conversions by month</h3><div class="hint">Estimates converted to tax invoices, by the month payment was received.</div><div id="trend"></div></div>
     <div class="card"><h3>Ageing of closing estimates</h3><div class="hint">Value still pending, by days since estimate date and fee type.</div><div id="ageing"></div></div>
   </div>
-  <div class="card" style="margin-bottom:16px"><h3>Sales manager performance</h3><div class="hint">Roll-forward per ${S.credit === "team" ? "team — the first name is the primary salesperson" : "person"}. Click a row to list their pending estimates.</div>
-    <div class="scroll"><table><thead><tr><th>${S.credit === "team" ? "Team (primary first)" : "Sales manager"}</th><th class="r">Opening</th><th class="r">+ New</th><th class="r">− Converted</th><th class="r">− Dropped</th><th class="r">Closing</th><th class="r">%</th><th>Closing by age</th></tr></thead><tbody>
-    ${r.teams.map(x => `<tr class="click" tabindex="0" data-team="${esc(x.team)}"><td>${teamHtml(x.team)}</td><td class="r num">${inr(x.opening)}</td><td class="r num">${inr(x.new)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.dropped)}</td><td class="r num"><b>${inr(x.closing)}</b></td><td class="r num">${nz(x.closing, t.closing)}%</td><td>${ageBar(x.ageing, x.closing, esc(x.team))}</td></tr>`).join("")}
-    <tr class="total"><td>Total</td><td class="r num">${inr(t.opening)}</td><td class="r num">${inr(t.new)}</td><td class="r num">${inr(t.converted)}</td><td class="r num">${inr(t.dropped)}</td><td class="r num">${inr(t.closing)}</td><td class="r num">100%</td><td></td></tr></tbody></table></div></div>
   <div class="grid g2">
-    <div class="card"><h3>Revenue segment report</h3><div class="hint">Same roll-forward, by fee type.</div><div class="scroll"><table class="compact"><thead><tr><th></th>${S.meta.categories.map(c => `<th class="r"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${CAT_COLOR[c]}"></i>${c}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
-      ${[["Opening", "opening"], ["+ New", "new"], ["− Converted", "converted"], ["− Dropped", "dropped"], ["Closing", "closing"]].map(([l, k]) => `<tr class="${k === "closing" ? "total" : ""}"><td>${l}</td>${S.meta.categories.map(c => `<td class="r num">${inr(r.segments[k][c])}</td>`).join("")}<td class="r num">${inr(Object.values(r.segments[k]).reduce((a, b) => a + b, 0))}</td></tr>`).join("")}</tbody></table></div></div>
-    <div class="card"><h3>Largest pending estimates</h3><div class="hint">Top 10 by value.</div><div class="scroll"><table><thead><tr><th>Customer</th><th>SM</th><th class="r">Age</th><th class="r">Amount</th></tr></thead><tbody>
-      ${r.pending_by_value.map(p => `<tr><td class="clip" title="${esc(p.customer)}">${esc(p.customer)}</td><td>${teamHtml(p.owners.replace(/\|/g, " & "))}</td><td class="r num">${p.age}d</td><td class="r num">${inr(p.amount)}</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="card"><h3>Revenue segment report</h3><div class="hint">Same roll-forward, by fee type. Click a number to list the estimates behind it.</div><div class="scroll"><table class="compact"><thead><tr><th></th>${S.meta.categories.map(c => `<th class="r"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${CAT_COLOR[c]}"></i>${c}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
+      ${[["Opening", "opening"], ["+ New", "new"], ["− Converted", "converted"], ["− Dropped", "dropped"], ["Closing", "closing"]].map(([l, k]) => `<tr class="${k === "closing" ? "total" : ""}"><td>${l}</td>${S.meta.categories.map(c => `<td class="r num">${dvc(r.segments[k][c], k, c)}</td>`).join("")}<td class="r num">${dvc(Object.values(r.segments[k]).reduce((a, b) => a + b, 0), k, "")}</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="card"><h3>Largest pending estimates</h3><div class="hint">Top 10 by value. Click one to open it.</div><div class="scroll"><table><thead><tr><th>Customer</th><th>SM</th><th class="r">Age</th><th class="r">Amount</th></tr></thead><tbody>
+      ${r.pending_by_value.map(p => `<tr class="click" tabindex="0" data-id="${p.id}" title="Open this estimate"><td class="clip" title="${esc(p.customer)}">${esc(p.customer)}</td><td>${teamHtml(p.owners.replace(/\|/g, " & "))}</td><td class="r num">${p.age}d</td><td class="r num">${inr(p.amount)}</td></tr>`).join("")}</tbody></table></div></div>
   </div>`;
   S.report = r; drawCharts();
+  activate(el, "tr[data-id]", tr => detail(+tr.dataset.id));
   $("#mon").onchange = e => { S.month = e.target.value; render(); };
   $("#split").onchange = e => { S.credit = e.target.value; render(); };
-  if ($("#pub")) $("#pub").onclick = async () => { try { await api("snapshots", { method: "POST", body: {} }); toast("Report published"); render(); } catch (e) { toast(e.message); } };
   if ($("#goCr")) $("#goCr").onclick = () => { if (can("finance")) S.tab = "finance"; else { S.filters = { status: "pending", change_requested: "1" }; S.tab = "estimates"; } render(); };
   if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
-  activate(el, "tr[data-team]", tr => { S.filters = { status: "pending", sm: tr.dataset.team.split(" & ")[0] }; S.tab = "estimates"; render(); });
+  const go = b => drillDown({ metric: b.dataset.metric, team: b.dataset.team, who: b.dataset.who, bucket: b.dataset.bucket, cat: b.dataset.cat, month: b.dataset.month, v: b.dataset.v }).catch(e => toast(e.message));
+  el.addEventListener("click", ev => { const b = ev.target.closest("[data-metric]"); if (b && el.contains(b)) go(b); });
+  el.addEventListener("keydown", ev => { const b = ev.target.closest("[data-metric]"); if (b && b.tagName !== "BUTTON" && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); go(b); } });
+  el.querySelectorAll("[data-pending]").forEach(b => b.onclick = () => {      // the name: that row's own pending estimates
+    const name = b.dataset.pending, mode = S.credit;
+    S.filters = { status: "pending", ...(mode === "team" ? { team: name.split(" & ").join("|") } : mode === "primary" ? { primary: name } : { sm: name }) };
+    S.tab = "estimates"; render();
+  });
+}
+const keyOf = label => S.credit === "team" ? label.split(" & ").join("|") : label;          // how the server identifies a row
+const dv = (v, metric, team, bucket) => v ? `<button class="drill" data-metric="${metric}" data-team="${esc(team ? keyOf(team) : "")}" data-who="${esc(team || "")}"${bucket ? ` data-bucket="${bucket}"` : ""} data-v="${Math.round(v)}" title="Show these estimates">${inr(v)}</button>` : inr(v);
+const dvc = (v, metric, cat) => v ? `<button class="drill" data-metric="${metric}" data-team="" data-who="" ${cat ? `data-cat="${esc(cat)}" ` : ""}data-v="${Math.round(v)}" title="Show these estimates">${inr(v)}</button>` : inr(v);
+const METRIC_LABEL = { opening: "Opening — pending on the 1st", new: "New this month", converted: "Converted (paid) this month", dropped: "Dropped this month", closing: "Closing — pending now" };
+async function drillDown(d) {
+  const qs = new URLSearchParams({ month: d.month || S.month, credit: S.credit, metric: d.metric, ...(d.team ? { team: d.team } : {}), ...(d.bucket ? { bucket: d.bucket } : {}), ...(d.cat ? { category: d.cat } : {}) });
+  const r = await api("report/drill?" + qs), who = (d.who || "All sales managers") + (d.cat ? " · " + d.cat : "");
+  const label = d.bucket ? `Pending ${d.bucket.replace("-", "–")} days` : METRIC_LABEL[d.metric];
+  const note = x => d.metric === "converted" ? `Paid ${fdate(x.closed_on)}${x.invoice_no && x.invoice_no !== "(legacy)" ? " · " + esc(x.invoice_no) : ""}` : d.metric === "dropped" ? `Dropped ${fdate(x.closed_on)}` : d.metric === "new" ? `Raised ${fdate(x.est_date)}` : `${x.age} days old`;
+  const split = S.credit === "split" && d.team;
+  const match = d.v === undefined || Math.round(r.counted) === +d.v;
+  modal(`${esc(who)} — ${label}`, `<div class="drill-sum"><b class="num">${r.count} estimate${r.count === 1 ? "" : "s"} · ₹ ${inr(r.counted)}</b> <span class="muted">${fmonth(r.month)}, as on ${fdate(r.as_on)}${split ? " · each joint estimate shows this person's equal share" : ""}${d.cat ? " · amounts are the " + esc(d.cat) + " part only" : ""}</span>
+    <span class="${match ? "ok" : "bad"}">${match ? "✓ adds up to the figure you clicked" : "⚠ does not match the figure you clicked (₹ " + inr(d.v) + ")"}</span></div>
+    <div class="scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th>${d.metric === "converted" ? "Payment" : d.metric === "dropped" ? "Dropped" : d.metric === "new" ? "Raised" : "Age"}</th></tr></thead><tbody>
+    ${r.rows.map(x => `<tr class="click" tabindex="0" data-id="${x.id}"><td>${esc(x.number)}</td><td>${fdate(x.est_date)}</td><td class="clip" title="${esc(x.customer)}">${esc(x.customer)}</td><td>${teamHtml(x.team)}</td>
+      <td><span class="fees">${x.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td>
+      <td class="r num">${inr(x.counted)}${Math.round(x.counted) !== Math.round(x.total) ? `<div class="muted" style="font-size:11px">of ${inr(x.total)}</div>` : ""}</td><td>${note(x)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing.</td></tr>`}</tbody>
+    <tfoot><tr class="total"><td colspan="5">Total</td><td class="r num">${inr(r.counted)}</td><td></td></tr></tfoot></table></div>`,
+    `<button class="btn primary" id="cx">Close</button>`, dlg => { $("#cx").onclick = closeModal; activate(dlg, "tr[data-id]", tr => detail(+tr.dataset.id)); }, true);
 }
 function ageBar(ag, tot, name) {
   if (!tot) return "";
@@ -160,7 +206,7 @@ function trendChart(tr, W) {
   return `<svg width="${W}" height="${H}" role="img" aria-label="Conversions per month">
   <g class="grid">${ticks.map(v => `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join("")}</g>
   ${tr.map((x, i) => { const cx = L + bw * i + bw / 2, w = Math.min(40, bw * .6), last = i === tr.length - 1;
-    return `<g data-tip="<b>${fmonth(x.month)}</b><br>Converted: ${x.actual}<br>Value: ₹ ${inr(x.actual_amount)}">
+    return `<g class="${x.actual ? "hit" : ""}" ${x.actual ? `data-metric="converted" data-month="${x.month}" data-team="" data-who="" data-v="${Math.round(x.actual_amount)}" tabindex="0" role="button" aria-label="${fmonth(x.month)}: ${x.actual} converted, list them"` : ""} data-tip="<b>${fmonth(x.month)}</b><br>Converted: ${x.actual}<br>Value: ₹ ${inr(x.actual_amount)}${x.actual ? "<br>Click to list them" : ""}">
       <rect x="${cx - bw / 2}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>
       ${x.actual ? `<path d="M${cx - w / 2},${y(0)} V${y(x.actual) + 4} a4,4 0 0 1 4,-4 h${w - 8} a4,4 0 0 1 4,4 V${y(0)} Z" fill="var(--s1)" opacity="${last ? 1 : .6}"/>` : ""}
       <text x="${cx}" y="${y(x.actual) - 6}" text-anchor="middle" class="v">${x.actual}</text>
@@ -172,16 +218,17 @@ function ageingChart(r, W) {
   return `<div class="legend">${cats.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c}</span>`).join("")}</div>
   <svg width="${W}" height="${B.length * rowH + 4}" role="img" aria-label="Ageing of pending estimates">
   ${B.map((b, i) => { let x = L; const y = i * rowH + 4;
-    return `<text x="${L - 10}" y="${y + 18}" text-anchor="end">${b} d</text>` + cats.map(c => { const v = r.ageing_segments[b][c], w = v / mx * avail; if (!v) return ""; const seg = `<rect x="${x}" y="${y + 5}" width="${Math.max(w - 2, 1)}" height="18" rx="3" fill="${CAT_COLOR[c]}" data-tip="<b>${b} days · ${c}</b><br>₹ ${inr(v)}"/>`; x += w; return seg; }).join("")
-      + `<text x="${x + 8}" y="${y + 18}" class="v" data-tip="${r.ageing_count[b]} estimate${r.ageing_count[b] === 1 ? "" : "s"} · ₹ ${inr(tot[i])}">₹ ${compact(tot[i])}</text>`; }).join("")}</svg>`;
+    return `<text x="${L - 10}" y="${y + 18}" text-anchor="end">${b} d</text>` + cats.map(c => { const v = r.ageing_segments[b][c], w = v / mx * avail; if (!v) return ""; const seg = `<rect class="hit" x="${x}" y="${y + 5}" width="${Math.max(w - 2, 1)}" height="18" rx="3" fill="${CAT_COLOR[c]}" data-metric="closing" data-bucket="${b}" data-cat="${esc(c)}" data-team="" data-who="" data-v="${Math.round(v)}" tabindex="0" role="button" aria-label="${b} days, ${c}: list these estimates" data-tip="<b>${b} days · ${c}</b><br>₹ ${inr(v)}<br>Click to list them"/>`; x += w; return seg; }).join("")
+      + `<text x="${x + 8}" y="${y + 18}" class="v hit" data-metric="closing" data-bucket="${b}" data-team="" data-who="" data-v="${Math.round(tot[i])}" tabindex="0" role="button" data-tip="${r.ageing_count[b]} estimate${r.ageing_count[b] === 1 ? "" : "s"} · ₹ ${inr(tot[i])}<br>Click to list them">₹ ${compact(tot[i])}</text>`; }).join("")}</svg>`;
 }
 
 /* ---------- estimates ---------- */
 async function estimates(el) {
   const f = S.filters, qs = new URLSearchParams(Object.fromEntries(Object.entries(f).filter(([, v]) => v)));
   const rows = await api("estimates?" + qs);
+  const chipText = f.team ? `Only “${f.team.split("|").join(" & ")}” (primary first)` : f.primary ? `Only estimates where ${f.primary} is the primary salesperson` : "";
   const opt = (arr, cur, all) => `<option value="">${all}</option>` + arr.map(a => `<option ${a === cur ? "selected" : ""}>${esc(a)}</option>`).join("");
-  el.innerHTML = `<div class="bar"><h2>Estimates <span class="muted num" style="font-weight:400;font-size:14px">${rows.length} · ₹ ${inr(rows.reduce((a, r) => a + r.total, 0))}</span></h2>
+  el.innerHTML = `<div class="bar"><h2>Estimates <span class="muted num" style="font-weight:400;font-size:14px">${rows.length} · ₹ ${inr(rows.reduce((a, r) => a + r.total, 0))}</span>${chipText ? ` <span class="chip" id="chip">${esc(chipText)} <button aria-label="Clear this filter" id="chipx">✕</button></span>` : ""}</h2>
     <label class="f">Search<input id="fq" placeholder="Customer or number" value="${esc(f.q || "")}"></label>
     <label class="f">Status<select id="fs"><option value="">All</option>${["pending", "received", "dropped"].map(s => `<option ${f.status === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
     <label class="f">Sales manager<select id="fm">${opt(S.meta.sms, f.sm, "All")}</select></label>
@@ -194,6 +241,7 @@ async function estimates(el) {
       <td><span class="fees">${r.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td>
       <td class="r num">${inr(r.total)}</td><td>${pill(r)}${r.change_requested ? ' <span class="pill cr">change requested</span>' : ""}</td><td class="r num">${r.age != null ? r.age + "d" : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>`}</tbody></table></div>`;
   const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
+  if ($("#chipx")) $("#chipx").onclick = () => { delete f.team; delete f.primary; render(); };
   set("#fcr", "change_requested"); set("#fs", "status"); set("#fm", "sm"); set("#fc", "category"); set("#fb", "bucket");
   $("#fq").onkeydown = e => { if (e.key === "Enter") { f.q = e.target.value; render(); } }; $("#fq").onblur = e => { if (e.target.value !== (f.q || "")) { f.q = e.target.value; render(); } };
   if ($("#new")) $("#new").onclick = () => editor();
@@ -266,23 +314,38 @@ const timeline = (list, age) => list.length ? `<ol class="tl">${list.map((f, i) 
 const canFollow = e => S.me.role !== "sales" || (S.me.sm_name && e.owners.split("|").includes(S.me.sm_name));
 
 async function followupsTab(el) {
-  S.fu = S.fu || { flag: "", sm: S.me.role === "sales" ? S.me.sm_name || "" : "", age: "30" };
-  const f = S.fu, qs = new URLSearchParams({ min_age: f.age, ...(f.sm ? { sm: f.sm } : {}), ...(f.flag ? { flag: f.flag } : {}) });
-  const [rows, all] = await Promise.all([api("followups?" + qs), api(`followups?min_age=${f.age}` + (f.sm ? "&sm=" + encodeURIComponent(f.sm) : ""))]);
-  const n = k => all.filter(r => r.flag === k).length;
-  el.innerHTML = `<div class="bar"><div style="margin-right:auto"><h2>Follow-ups on pending estimates</h2><div class="sub">Every pending estimate older than ${f.age} days, with the full timeline of follow-ups. Worst first.</div></div>
-    <label class="f">Older than<select id="fa">${[30, 60, 90].map(d => `<option value="${d}" ${String(d) === f.age ? "selected" : ""}>${d} days</option>`).join("")}</select></label>
-    <label class="f">Sales manager<select id="fm"><option value="">All</option>${S.meta.sms.map(s => `<option ${s === f.sm ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
-    <label class="f">Show<select id="ff"><option value="">All</option>${Object.entries(FLAG).map(([k, v]) => `<option value="${k}" ${f.flag === k ? "selected" : ""}>${v[1]}</option>`).join("")}</select></label></div>
-  <div class="attn" style="margin-bottom:16px"><span class="pill dropped">${n("none")} with no follow-up</span><span class="pill dropreq">${n("overdue")} overdue</span><span class="pill received">${n("ok")} on track</span><span class="muted" style="align-self:center">${all.length} estimates · ₹ ${inr(all.reduce((a, r) => a + r.total, 0))}</span></div>
-  <div class="list">${rows.map(r => `<div class="card fu"><div class="fu-h"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span>
-      <div class="muted">${teamHtml(r.team)} · ₹ ${inr(r.total)} · <b>${r.age} days</b> pending · ${r.followups.length} follow-up${r.followups.length === 1 ? "" : "s"}</div></div>
+  const DEF = { q: "", sm: S.me.role === "sales" ? S.me.sm_name || "" : "", cat: "", flag: "", age: "30", sort: "worst" };
+  const F = S.fu = Object.assign({}, DEF, S.fu || {});
+  const rows = (await api("followups?min_age=" + F.age)).map(r => ({ ...r, extra: r.followups.map(f => `${f.note} ${f.contact || ""} ${f.by_user}`).join(" ") }));
+  const FSORT = { worst: ["Worst first (no follow-up, then overdue)", null], ...Object.fromEntries(["oldest", "newest", "high", "low", "az", "za", "number", "sm"].map(k => [k, SORTS[k]])),
+    most: ["Most follow-ups", (a, b) => b.followups.length - a.followups.length], fewest: ["Fewest follow-ups", (a, b) => a.followups.length - b.followups.length],
+    lastold: ["Last follow-up: longest ago", (a, b) => (a.last || "").localeCompare(b.last || "")], nextsoon: ["Next follow-up: soonest", (a, b) => (a.next || "9999").localeCompare(b.next || "9999")] };
+  const extra = `<label class="f">Older than<select id="t-age">${opts([30, 60, 90].map(d => [String(d), d + " days"]), F.age)}</select></label>
+    <label class="f">Show<select id="t-flag">${opts(Object.entries(FLAG).map(([k, v]) => [k, v[1]]), F.flag, "All")}</select></label>`;
+  const sortMenu = Object.keys(FSORT).map(k => [k, FSORT[k][0]]);
+  el.innerHTML = `<div class="bar"><div style="margin-right:auto"><h2>Follow-ups on pending estimates</h2><div class="sub">Every pending estimate older than ${F.age} days, with the full timeline of follow-ups.</div></div></div>
+    <div class="toolbar"><label class="f grow">Search<input id="t-q" type="search" placeholder="Number, customer, name or notes…" value="${esc(F.q)}" autocomplete="off"></label>
+    <label class="f">Sales manager<select id="t-sm">${opts(S.meta.sms, F.sm, "All")}</select></label>
+    <label class="f">Fee type<select id="t-cat">${opts(S.meta.categories, F.cat, "All")}</select></label>${extra}
+    <label class="f">Sort by<select id="t-sort">${opts(sortMenu, F.sort)}</select></label><button class="btn" id="t-reset" title="Clear the search, filters and sorting">Reset</button></div>
+    <div class="attn" id="fu-chips" style="margin-bottom:16px"></div><div class="list" id="fu-list"></div>`;
+  const paint = () => {
+    const base = rows.filter(r => passes({ ...F, bucket: "" }, r)), vis = base.filter(r => !F.flag || r.flag === F.flag);
+    if (F.sort !== "worst") vis.sort(FSORT[F.sort][1]);
+    const n = k => base.filter(r => r.flag === k).length;
+    $("#fu-chips").innerHTML = `<span class="pill dropped">${n("none")} with no follow-up</span><span class="pill dropreq">${n("overdue")} overdue</span><span class="pill received">${n("ok")} on track</span><span class="muted" style="align-self:center">${vis.length}${vis.length !== rows.length ? " of " + rows.length : ""} estimates · ₹ ${inr(vis.reduce((a, r) => a + r.total, 0))}</span>`;
+    $("#fu-list").innerHTML = vis.map(r => `<div class="card fu"><div class="fu-h"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span>
+      <div class="muted">${teamHtml(r.team)} · ₹ ${inr(r.total)} · <b>${r.age} days</b> pending · ${r.followups.length} follow-up${r.followups.length === 1 ? "" : "s"}${r.next ? " · next " + fdate(r.next) : ""}</div></div>
       <span class="pill ${FLAG[r.flag][0]}">${FLAG[r.flag][1]}</span>
-      <button class="btn sm" data-open="${r.id}">Open</button>${canFollow(r) ? `<button class="btn sm primary" data-log="${r.id}">Log follow-up</button>` : ""}</div>${timeline(r.followups, r.age)}</div>`).join("") || `<div class="muted card">Nothing here — no estimate matches.</div>`}</div>`;
-  const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
-  set("#fa", "age"); set("#fm", "sm"); set("#ff", "flag");
-  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
-  el.querySelectorAll("[data-log]").forEach(b => b.onclick = () => followupForm(rows.find(r => r.id == b.dataset.log)));
+      <button class="btn sm" data-open="${r.id}">Open</button>${canFollow(r) ? `<button class="btn sm primary" data-log="${r.id}">Log follow-up</button>` : ""}</div>${timeline(r.followups, r.age)}</div>`).join("") || `<div class="muted card">${rows.length ? "Nothing matches the search and filters." : "No pending estimate is older than this."}</div>`;
+    el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
+    el.querySelectorAll("[data-log]").forEach(b => b.onclick = () => followupForm(rows.find(r => r.id == b.dataset.log)));
+  };
+  let t; $("#t-q").oninput = e => { clearTimeout(t); t = setTimeout(() => { F.q = e.target.value; paint(); }, 120); };
+  [["#t-sm", "sm"], ["#t-cat", "cat"], ["#t-flag", "flag"], ["#t-sort", "sort"]].forEach(([id, k]) => $(id).onchange = e => { F[k] = e.target.value; paint(); });
+  $("#t-age").onchange = e => { F.age = e.target.value; render(); };
+  $("#t-reset").onclick = () => { S.fu = { ...DEF }; render(); };
+  paint();
 }
 function followupForm(e) {
   modal("Log follow-up · " + esc(e.number), `<form class="form" id="ff2">
@@ -367,56 +430,61 @@ async function submit(e, act, body) {
   catch (er) { const x = $("#ee"); if (x) x.innerHTML = `<div class="err">${esc(er.message)}</div>`; else toast(er.message); if (er.status === 409) setTimeout(() => detail(e.id), 900); }
 }
 
+/* ---------- shared search / filter / sort bar ---------- */
+const ageOf = d => Math.round((new Date(S.meta.today + "T00:00") - new Date(d + "T00:00")) / 864e5);
+const bucketOf = a => a <= 30 ? "0-30" : a <= 60 ? "31-60" : a <= 90 ? "61-90" : "90+";
+const SORTS = {
+  oldest: ["Oldest first", (a, b) => b.age - a.age], newest: ["Newest first", (a, b) => a.age - b.age],
+  high: ["Amount: high to low", (a, b) => b.total - a.total], low: ["Amount: low to high", (a, b) => a.total - b.total],
+  az: ["Customer A–Z", (a, b) => a.customer.localeCompare(b.customer)], za: ["Customer Z–A", (a, b) => b.customer.localeCompare(a.customer)],
+  number: ["Estimate number", (a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })], sm: ["Sales manager A–Z", (a, b) => a.team.localeCompare(b.team) || b.age - a.age],
+};
+const passes = (F, it) => (!F.q || [it.number, it.customer, it.team, it.extra || ""].join(" ").toLowerCase().includes(F.q.toLowerCase().trim()))
+  && (!F.sm || it.owners.split("|").includes(F.sm)) && (!F.cat || it.categories.includes(F.cat)) && (!F.bucket || bucketOf(it.age) === F.bucket);
+const opts = (arr, cur, all) => (all ? `<option value="">${all}</option>` : "") + arr.map(a => { const [v, l] = Array.isArray(a) ? a : [a, a]; return `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`; }).join("");
+function toolbar(F, { sorts, bucket = true, extra = "" }) {
+  return `<div class="toolbar"><label class="f grow">Search<input id="t-q" type="search" placeholder="Estimate no., customer, sales manager…" value="${esc(F.q)}" autocomplete="off"></label>
+    <label class="f">Sales manager<select id="t-sm">${opts(S.meta.sms, F.sm, "All")}</select></label>
+    <label class="f">Fee type<select id="t-cat">${opts(S.meta.categories, F.cat, "All")}</select></label>
+    ${bucket ? `<label class="f">Age<select id="t-b">${opts(S.meta.buckets.map(b => [b, b.replace("-", "–") + " days"]), F.bucket, "All")}</select></label>` : ""}
+    ${extra}<label class="f">Sort by<select id="t-sort">${opts(sorts.map(k => [k, SORTS[k]?.[0] || k]), F.sort)}</select></label>
+    <button class="btn" id="t-reset" title="Clear the search, filters and sorting">Reset</button></div>`;
+}
+function bindToolbar(root, F, defaults, paint, refetch) {
+  let t; $("#t-q", root).oninput = e => { clearTimeout(t); t = setTimeout(() => { F.q = e.target.value; paint(); }, 120); };
+  [["#t-sm", "sm"], ["#t-cat", "cat"], ["#t-b", "bucket"], ["#t-sort", "sort"]].forEach(([id, k]) => { const x = $(id, root); if (x) x.onchange = e => { F[k] = e.target.value; paint(); }; });
+  $("#t-reset", root).onclick = () => { Object.assign(F, defaults); refetch(); };
+}
+
 /* ---------- finance desk ---------- */
 async function finance(el) {
   const [drops, pend, crs] = await Promise.all([api("estimates?drop_requested=1"), api("estimates?status=pending"), api("change-requests?status=open")]);
-  el.innerHTML = `<div class="bar"><h2>Finance desk</h2></div>
-  <div class="card" style="margin-bottom:16px"><h3>Change requests from sales (${crs.length})</h3><div class="hint">Any finance person can approve (the change is applied immediately) or reject with a reason. Sales and finance are notified either way.</div>
-    ${crs.length ? `<div class="list">${crs.map(cr => `<div class="item" style="display:block"><div style="display:flex;gap:12px;justify-content:space-between"><div><b>${esc(cr.number)}</b> · <span title="${esc(cr.customer)}">${esc(cr.customer)}</span></div><button class="btn sm" data-open="${cr.estimate_id}">Open estimate</button></div>${crCard(cr)}</div>`).join("")}</div>` : `<div class="muted">Nothing waiting.</div>`}</div>
-  <div class="card" style="margin-bottom:16px"><h3>Drop requests from sales (${drops.length})</h3><div class="hint">Open a request to approve it (writes the estimate off) or reject it (keeps it pending).</div>
-    ${drops.length ? `<div class="list">${drops.map(r => `<div class="item click" tabindex="0" data-id="${r.id}"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span><div class="muted">“${esc(r.drop_reason)}” — ${esc(r.drop_requested_by)}, ${fdate(r.drop_requested_on)}</div></div><div class="num"><b>₹ ${inr(r.total)}</b></div></div>`).join("")}</div>` : `<div class="muted">Nothing waiting.</div>`}</div>
-  <div class="card"><h3>Pending — oldest first (${pend.length})</h3><div class="hint">Open an estimate to record the payment and tax invoice. Showing the oldest 40.</div><div class="scroll"><table><thead><tr><th>Estimate</th><th>Customer</th><th>Sales manager</th><th class="r">Amount</th><th class="r">Age</th><th></th></tr></thead><tbody>
-  ${pend.sort((a, b) => b.age - a.age).slice(0, 40).map(r => `<tr class="click" tabindex="0" data-id="${r.id}"><td>${esc(r.number)}</td><td class="clip" title="${esc(r.customer)}">${esc(r.customer)}</td><td>${teamHtml(r.team)}</td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}</td></tr>`).join("")}</tbody></table></div></div>`;
-  activate(el, "[data-id]", x => detail(+x.dataset.id));
-  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
-  el.querySelectorAll("[data-cr-ok]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crOk), "approve"));
-  el.querySelectorAll("[data-cr-no]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crNo), "reject"));
-}
-
-/* ---------- published history ---------- */
-async function historyTab(el) {
-  const list = await api("snapshots");
-  el.innerHTML = `<div class="bar"><h2>Published reports</h2><div class="sub">The numbers exactly as published each day — they don't change when data is edited later.</div></div>
-  <div class="grid g2"><div class="card"><table><tbody>${list.map(s => `<tr class="click" tabindex="0" data-d="${s.day}"><td>${fdate(s.day)}</td><td class="muted">${esc(s.published_by)}</td></tr>`).join("") || '<tr><td class="muted">Nothing published yet. Finance publishes from the dashboard.</td></tr>'}</tbody></table></div><div class="card" id="snap"><div class="muted">Pick a day.</div></div></div>`;
-  activate(el, "tr[data-d]", async tr => {
-    const s = await api("snapshots/" + tr.dataset.d), r = s.data, t = r.total;
-    $("#snap").innerHTML = `<h3>${fdate(s.day)} · published by ${esc(s.published_by)}</h3><dl class="kv"><dt>Opening</dt><dd class="num">₹ ${inr(t.opening)}</dd><dt>+ New</dt><dd class="num">₹ ${inr(t.new)}</dd><dt>− Converted</dt><dd class="num">₹ ${inr(t.converted)}</dd><dt>− Dropped</dt><dd class="num">₹ ${inr(t.dropped)}</dd><dt><b>Closing</b></dt><dd class="num"><b>₹ ${inr(t.closing)}</b></dd></dl>
-      <table><thead><tr><th>Team</th><th class="r">Converted</th><th class="r">Closing</th></tr></thead><tbody>${r.teams.map(x => `<tr><td>${esc(x.team)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.closing)}</td></tr>`).join("")}</tbody></table>`;
-  });
-}
-
-/* ---------- rules ---------- */
-async function rulesTab(el) {
-  el.innerHTML = `<div class="bar"><h2>How this works</h2></div><div class="grid g2">
-  <div class="card help"><h3>Who enters what</h3><ul>
-   <li><b>Sales</b> raise estimates (number, date, customer, fees by type, sales manager). They can edit an estimate while it is pending, and <i>propose</i> a drop with a reason. They can see everyone's numbers.</li>
-   <li>Finance prepares the estimate elsewhere and emails the PDF; <b>sales enter the details here from that PDF</b> (and can attach it).</li>
-   <li><b>Finance</b> records the payment and tax invoice (which converts the estimate), approves or rejects drop requests, may drop directly with a reason, and publishes the daily report.</li>
-   <li><b>Admin</b> manages users and the sales-manager list, and is the only role that can reopen a closed estimate.</li></ul></div>
-  <div class="card help"><h3>Rules the system enforces</h3><ul>
-   <li><b>Changing an estimate:</b> once saved, sales can't edit it directly. They use <i>Request change</i> (what to change + why). Everyone is notified, any finance person can approve (applied at once) or reject with a reason, and the requester can withdraw. If the estimate changed after the request was made, finance rejects it and sales ask again. Follow-ups, attachments and drop proposals don't need a request.</li>
-   <li>Estimate numbers are unique. One estimate can carry several fee lines (one per fee type); status belongs to the whole estimate.</li>
-   <li>Estimate date can't be in the future; payment can't be before the estimate or in the future; a tax invoice number is mandatory to mark received.</li>
-   <li>Amounts must be positive. Sales can only raise/edit estimates they are a named sales manager on.</li>
-   <li>Closed (received/dropped) estimates are locked. Every change is logged; two people editing the same estimate can't overwrite each other.</li></ul></div>
-  <div class="card help"><h3>How the numbers are built</h3><ul>
-   <li><b>Opening</b> = estimates booked in earlier months that were still pending on the 1st. <b>New</b> = estimates booked in the month (the <i>report month</i> on each estimate, normally its date's month). <b>Converted / Dropped</b> = closed in the month (any estimate date).</li>
-   <li><b>Closing = Opening + New − Converted − Dropped</b> = what is pending as on the report date. Because closure dates are stored, you can pick any past month and get the same answer the workbook would have given.</li>
-   <li><b>Follow-ups:</b> any pending estimate older than 30 days is on the Follow-ups board with its full timeline. It shows <i>No follow-up yet</i> if none is logged, <i>Overdue</i> once the promised next date passes (or 7 days after the last one when no next date was set), otherwise <i>On track</i>. Sales log their own; finance can log on any.</li>
-   <li><b>Payment</b> is in full only: finance marks the estimate paid and enters the payment date. There is no drop date to estimate; a drop is recorded with a reason when finance approves it.</li>
-   <li><b>Age</b> = report date − estimate date: 0–30, 31–60, 61–90, 90+ days.</li>
-   <li>The first name on an estimate is the <b>primary salesperson</b>. "A &amp; B" and "B &amp; A" are separate rows, as in the workbook; switch <i>Credit</i> to count joint deals for the primary only, or split them equally.</li></ul></div>
-  <div class="card help"><h3>Daily routine</h3><ul><li>Sales update estimates through the day.</li><li>Finance records receipts and decisions.</li><li>Finance clicks <b>Publish today's report</b> — it freezes the day's numbers under <i>Published reports</i> and anyone can open the dashboard live instead of waiting for the email.</li></ul></div></div>`;
+  const DEF = { q: "", sm: "", cat: "", bucket: "", sort: "oldest", limit: 50 }, F = S.fd = Object.assign({}, DEF, S.fd || {});
+  const items = {
+    cr: crs.map(c => ({ ...c, team: c.owners.split("|").join(" & "), age: c.est_date ? ageOf(c.est_date) : 0, extra: `${c.reason} ${c.requested_by}` })),
+    dr: drops.map(d => ({ ...d, extra: `${d.drop_reason || ""} ${d.drop_requested_by || ""}` })), pd: pend,
+  };
+  el.innerHTML = `<div class="bar"><h2>Finance desk</h2></div>${toolbar(F, { sorts: ["oldest", "newest", "high", "low", "az", "za", "number", "sm"] })}
+    <div class="card" id="fd-cr" style="margin-bottom:16px"></div><div class="card" id="fd-dr" style="margin-bottom:16px"></div><div class="card" id="fd-pd"></div>`;
+  const shown = (arr, label) => `${arr.length}${arr.length !== items[label].length ? " of " + items[label].length : ""}`;
+  const paint = () => {
+    const by = SORTS[F.sort][1], cr = items.cr.filter(x => passes(F, x)).sort(by), dr = items.dr.filter(x => passes(F, x)).sort(by), pd = items.pd.filter(x => passes(F, x)).sort(by);
+    $("#fd-cr").innerHTML = `<h3>Change requests from sales (${shown(cr, "cr")})</h3><div class="hint">Any finance person can approve (the change is applied immediately) or reject with a reason. Sales and finance are notified either way.</div>
+      ${cr.length ? `<div class="list">${cr.map(x => `<div class="item" style="display:block"><div style="display:flex;gap:12px;justify-content:space-between"><div><b>${esc(x.number)}</b> · <span title="${esc(x.customer)}">${esc(x.customer)}</span> <span class="muted">· ${teamHtml(x.team)} · ₹ ${inr(x.total)}</span></div><button class="btn sm" data-open="${x.estimate_id}">Open estimate</button></div>${crCard(x)}</div>`).join("")}</div>` : `<div class="muted">${items.cr.length ? "Nothing matches the search and filters." : "Nothing waiting."}</div>`}`;
+    $("#fd-dr").innerHTML = `<h3>Drop requests from sales (${shown(dr, "dr")})</h3><div class="hint">Open a request to approve it (writes the estimate off) or reject it (keeps it pending).</div>
+      ${dr.length ? `<div class="list">${dr.map(r => `<div class="item click" tabindex="0" data-id="${r.id}"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span> <span class="muted">· ${teamHtml(r.team)}</span><div class="muted">“${esc(r.drop_reason)}” — ${esc(r.drop_requested_by)}, ${fdate(r.drop_requested_on)}</div></div><div class="num"><b>₹ ${inr(r.total)}</b></div></div>`).join("")}</div>` : `<div class="muted">${items.dr.length ? "Nothing matches the search and filters." : "Nothing waiting."}</div>`}`;
+    const page = pd.slice(0, F.limit);
+    $("#fd-pd").innerHTML = `<h3>Pending estimates (${shown(pd, "pd")}) <span class="muted num" style="font-weight:400">· ₹ ${inr(pd.reduce((a, r) => a + r.total, 0))}</span></h3><div class="hint">Open an estimate to record the payment and tax invoice. Sorted by “${esc(SORTS[F.sort][0])}”.</div>
+      <div class="scroll"><table><thead><tr><th>Estimate</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th class="r">Age</th><th></th></tr></thead><tbody>
+      ${page.map(r => `<tr class="click" tabindex="0" data-id="${r.id}"><td>${esc(r.number)}</td><td class="clip" title="${esc(r.customer)}">${esc(r.customer)}</td><td>${teamHtml(r.team)}</td><td><span class="fees">${r.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}${r.change_requested ? ' <span class="pill cr">change requested</span>' : ""}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing matches the search and filters.</td></tr>`}</tbody></table></div>
+      ${pd.length > page.length ? `<div style="margin-top:12px"><button class="btn" id="more">Show ${Math.min(50, pd.length - page.length)} more (${pd.length - page.length} left)</button></div>` : ""}`;
+    activate(el, "tr[data-id], .item[data-id]", x => detail(+x.dataset.id));
+    el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
+    el.querySelectorAll("[data-cr-ok]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crOk), "approve"));
+    el.querySelectorAll("[data-cr-no]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crNo), "reject"));
+    if ($("#more")) $("#more").onclick = () => { F.limit += 50; paint(); };
+  };
+  bindToolbar(el, F, DEF, () => { F.limit = DEF.limit; paint(); }, () => render()); paint();
 }
 
 /* ---------- admin ---------- */
@@ -425,7 +493,7 @@ async function admin(el) {
   el.innerHTML = `<div class="bar"><h2>Admin</h2></div><div class="grid g2">
   <div class="card"><h3>Users</h3><div class="hint">Sales users are linked to one sales manager.</div><div class="scroll"><table><thead><tr><th>User</th><th>Role</th><th>Linked SM</th><th></th></tr></thead><tbody>
     ${users.map(u => `<tr><td>${esc(u.name)} <span class="muted">${esc(u.username)}</span></td><td>${u.role}</td><td>${esc(u.sm_name || "")}</td><td>${u.active ? "" : '<span class="pill dropped">inactive</span> '}<button class="btn sm" data-u="${u.id}">Edit</button></td></tr>`).join("")}</tbody></table></div>
-    <button class="btn primary" id="nu" style="margin-top:12px">+ Add user</button></div>
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn primary" id="nu">+ Add user</button><button class="btn" id="bulk" title="Creates a sales login for every sales manager who doesn't have one yet">Create logins for all sales managers</button></div></div>
   <div class="card"><h3>Sales managers</h3><div class="hint">Deactivate someone who has left: history is kept, but they can't be picked on new estimates.</div>
     <div class="scroll"><table><tbody>${sms.map(s => `<tr><td>${esc(s.name)}</td><td class="r"><button class="btn sm" data-sm="${esc(s.name)}" data-on="${s.active ? 0 : 1}">${s.active ? "Deactivate" : "Reactivate"}</button></td></tr>`).join("")}</tbody></table></div>
     <form id="asm" class="bar" style="margin:12px 0 0"><label class="f">New sales manager<input name="n" required></label><button class="btn">Add</button></form></div>
@@ -453,6 +521,7 @@ async function admin(el) {
         try { await api("users", { method: u ? "PUT" : "POST", body }); closeModal(); toast("Saved"); render(); } catch (er) { $("#ee").innerHTML = `<div class="err">${esc(er.message)}</div>`; } };
     });
   $("#nu").onclick = () => userForm();
+  $("#bulk").onclick = async () => { try { const r = await api("users/bulk-sales", { method: "POST", body: {} }); toast(r.created.length ? `Created ${r.created.length} sales login${r.created.length > 1 ? "s" : ""}` : "Every sales manager already has a login"); render(); } catch (er) { toast(er.message); } };
   el.querySelectorAll("[data-u]").forEach(b => b.onclick = () => userForm(users.find(u => u.id == b.dataset.u)));
 }
 boot();

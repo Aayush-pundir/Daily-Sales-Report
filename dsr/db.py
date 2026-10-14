@@ -15,7 +15,6 @@ CREATE TABLE IF NOT EXISTS estimates(id INTEGER PRIMARY KEY, number TEXT UNIQUE 
 CREATE TABLE IF NOT EXISTS lines(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
   category TEXT NOT NULL, amount REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, estimate_id INTEGER, at TEXT, user TEXT, action TEXT, detail TEXT);
-CREATE TABLE IF NOT EXISTS snapshots(day TEXT PRIMARY KEY, published_by TEXT, at TEXT, data TEXT);
 CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL, name TEXT, stored TEXT, mime TEXT, size INTEGER, uploaded_by TEXT, uploaded_at TEXT);
 CREATE TABLE IF NOT EXISTS api_keys(id INTEGER PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, prefix TEXT, role TEXT NOT NULL CHECK(role IN('read','sales','finance')),
   active INTEGER DEFAULT 1, created_at TEXT, last_used TEXT);
@@ -40,7 +39,9 @@ FILES_DIR = os.path.join(os.path.dirname(DB_PATH), "files")
 
 
 def connect(path=None):
-    c = sqlite3.connect(path or DB_PATH, timeout=10)
+    path = os.path.abspath(path or DB_PATH)
+    os.makedirs(os.path.dirname(path), exist_ok=True)      # a fresh clone has no data/ folder yet
+    c = sqlite3.connect(path, timeout=10)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.executescript(SCHEMA)
@@ -53,15 +54,26 @@ def connect(path=None):
     return c
 
 
+PBKDF2_ROUNDS = 600_000
+
+
 def hash_pw(pw, salt=None):
+    """PBKDF2-HMAC-SHA256: available in every Python build (macOS's system Python has no hashlib.scrypt)."""
     salt = salt or secrets.token_bytes(16)
-    h = hashlib.scrypt(pw.encode(), salt=salt, n=2 ** 14, r=8, p=1)
-    return salt.hex() + "$" + h.hex()
+    h = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, PBKDF2_ROUNDS)
+    return f"pbkdf2${PBKDF2_ROUNDS}${salt.hex()}${h.hex()}"
 
 
 def check_pw(pw, stored):
-    salt, h = stored.split("$")
-    return secrets.compare_digest(hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=2 ** 14, r=8, p=1).hex(), h)
+    parts = stored.split("$")
+    if parts[0] == "pbkdf2":
+        _, rounds, salt, h = parts
+        calc = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), int(rounds)).hex()
+    else:                                   # older databases: "salt$hash" made with scrypt
+        if not hasattr(hashlib, "scrypt"): return False
+        salt, h = parts
+        calc = hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=2 ** 14, r=8, p=1).hex()
+    return secrets.compare_digest(calc, h)
 
 
 def now():

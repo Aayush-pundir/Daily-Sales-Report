@@ -3,6 +3,20 @@
 **One shared screen that replaces the daily Excel + email.**
 Sales type in the estimates they raise, Finance records the payments, and everybody sees the same up-to-date picture: how much is waiting to be paid, how old it is, who is chasing it, and what changed today.
 
+## Quick start (about 5 minutes)
+
+You need **Python 3.9 or newer** and **git** (a Mac already has both; on Windows: `winget install Python.Python.3.12` and `winget install Git.Git`).
+
+```bash
+git clone https://github.com/Aayush-pundir/Daily-Sales-Report.git
+cd Daily-Sales-Report
+python3 -m dsr            # on Windows: python -m dsr
+```
+
+Open **http://127.0.0.1:8080** and click **Administrator** — there is no password when it runs on your own computer. In **Admin**, press **Create logins for all sales managers** and add your finance people with **+ Add user**.
+
+*Optional — start with your existing Excel (do this once, before entering anything):* `pip3 install openpyxl`, then `python3 -m dsr.import_xlsx "/path/to/Revenue.xlsx" --as-of 2026-10-13`. Details in [section 12](#12-installing-running-and-looking-after-it).
+
 > If you only read one section, read **[1. The 2-minute version](#1-the-2-minute-version)** and **[4. The rules](#4-the-rules-in-plain-words)**.
 
 ---
@@ -36,7 +50,7 @@ Sales type in the estimates they raise, Finance records the payments, and everyb
 | Finance prepares the estimate, emails the PDF | Same — nothing changes here |
 | Sales re-type details into a sheet | Sales type the details **once** into the app (and can attach the PDF) |
 | Finance updates "Received / Dropped" by hand | Finance clicks **Record payment** or approves a **Drop** |
-| Someone rebuilds the Summary and emails it | The dashboard is always live; Finance can also **Publish** a frozen copy of the day's numbers |
+| Someone rebuilds the Summary and emails it | The dashboard is always live for everyone |
 | "Did anyone call this customer?" | Every follow-up on an estimate older than 30 days has a visible **timeline** |
 | "Who changed the amount?" | Sales **request** changes, Finance approves, everyone is notified, everything is logged |
 
@@ -69,7 +83,6 @@ There are three kinds of user. An administrator creates the accounts.
 | Propose to drop an estimate (with a reason) | their own | – | – |
 | Approve / reject / make a drop | – | ✔ | ✔ |
 | Record that the customer paid | – | ✔ | ✔ |
-| Publish the day's report | – | ✔ | ✔ |
 | Attach the estimate PDF | on their own | ✔ | ✔ |
 | Re-open a closed (paid/dropped) estimate | – | – | ✔ |
 | Manage users, the sales-manager list, API keys, the webhook | – | – | ✔ |
@@ -82,7 +95,7 @@ There are three kinds of user. An administrator creates the accounts.
 2. **During the day** – Sales call/WhatsApp/email customers and log each follow-up. If a PDF was wrong they raise a *change request*.
 3. **When money arrives** – Finance opens the estimate, clicks **Record payment**, enters the invoice number and the date the money came in. The estimate turns green and drops out of "pending".
 4. **When a deal is dead** – Sales propose a drop with a reason; Finance approves.
-5. **End of day** – Finance clicks **Publish today's report**. That freezes today's numbers under **Reports** so they can be looked at later exactly as they were.
+5. **End of day** – nothing to send out: the dashboard is always up to date for everyone, and **Export CSV** gives anyone a spreadsheet of every estimate.
 
 ---
 
@@ -100,12 +113,11 @@ There are three kinds of user. An administrator creates the accounts.
 | **Report month** | The month an estimate is counted in. Normally the month of its date. It can differ (an estimate dated 8 Oct can be filed under September, as in the old sheet). |
 | **Opening** | Estimates from earlier months that were still unpaid on the 1st of the month. |
 | **New** | Estimates counted in the month. |
-| **Converted** | Estimates paid in the month. |
+| **Converted** | Estimates paid in the month (shown in green). |
 | **Closing** | What is still unpaid at the report date: `Opening + New − Converted − Dropped`. |
 | **Age** | Days between the estimate date and the report date. |
 | **Follow-up** | A logged touch-point with the customer about an unpaid estimate (call, email, WhatsApp, meeting). |
 | **Change request** | Sales asking Finance to correct a saved estimate. |
-| **Published report** | A frozen copy of one day's numbers. |
 
 ---
 
@@ -206,12 +218,11 @@ sequenceDiagram
 
 | Screen | Who it is for | What you do there |
 |---|---|---|
-| **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted → Dropped → Closing. Below: conversions per month, ageing, the sales-manager table (click a name to see their pending estimates), the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
-| **Estimates** | Everyone | Search and filter every estimate. **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
-| **Follow-ups** | Everyone | Every pending estimate over 30 days (or 60 / 90) with its timeline, worst first. **Log follow-up** right from the card. Sales see their own by default. |
-| **Finance desk** | Finance | Three lists: **change requests** (approve / reject), **drop requests**, and **pending estimates, oldest first** (open one to record payment). |
-| **Reports** | Everyone | The frozen daily reports Finance published. |
-| **Rules** | Everyone | A short in-app version of section 4. |
+| **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted (green) → Dropped (red) → Closing. Below, in the same order as the old *Reporting* sheet: the **sales-manager movement table**, then the **closing-estimates ageing table by sales manager** (0–30 / 31–60 / 61–90 / 90+ days, total and % of total), then conversions per month, the ageing chart by fee type, the fee-type table and the biggest pending estimates. **Every figure is clickable and lists exactly the estimates behind it** — the five tiles, every number in both sales-manager tables (including the Total rows and each age column), every cell of the fee-type table (that fee type's part only), each segment and total in the ageing-by-fee-type chart, and each month's bar in the conversions chart. In the *Largest pending* list, a click opens the estimate. Click Arshdeep's *Converted* and you get the estimates he converted this month; click Meisheil's *31–60 days* and you get just those. The list always adds up to the number you clicked (and says so). Click a *name* instead to see that row's own pending estimates ("Meisheil" shows only Meisheil's own, not the ones shared as "Meisheil & Arshdeep" or "Arshdeep & Meisheil"; each is its own row). The same applies in the other two credit modes, the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
+| **Estimates** | Everyone | Search and filter every estimate (by status, sales manager, fee type, age, or *awaiting finance* change requests; press Enter or click away to apply). **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
+| **Follow-ups** | Everyone | Every pending estimate over 30 days (or 60 / 90) with its timeline. **Search** (number, customer, name, or what was discussed), **filter** by sales manager, fee type and flag, and **sort** (worst first, oldest, amount, most/fewest follow-ups, last or next follow-up…). **Log follow-up** right from the card. Sales see their own by default. |
+| **Finance desk** | Finance | Three lists: **change requests** (approve / reject), **drop requests**, and **all pending estimates** (open one to record payment). One bar at the top **searches** all three (number, customer, sales manager, or the reason given), **filters** by sales manager, fee type and age, and **sorts** (oldest, newest, amount, customer, number, sales manager). *Reset* clears it. |
+| **Sign-in page** | Everyone | On your own computer: **click your name** (no password). See section 12 for how this switches itself off on a network. |
 | **Admin** | Admin | Users, sales-manager list, API keys for other systems, webhook. |
 | **🔔 bell** | Everyone | Shared notifications: change requested / approved / rejected / withdrawn. A red number shows how many you have not seen. It refreshes by itself about every 20 seconds. |
 
@@ -258,14 +269,14 @@ How a joint deal ("Arshdeep & Meisheil") appears in the sales-manager table:
 | **Primary salesperson only** | The whole amount goes to the primary. |
 | **Split equally** | The amount is shared equally between the names. |
 
+### Click any number to see what is behind it
+Every figure on the dashboard — the five tiles, each cell of the two sales-manager tables (including the Total rows and every age column), each cell of the fee-type table, each bar segment in the ageing chart and each month in the conversions chart — opens a list of exactly the estimates that make up that number. The list says how many there are, shows its own total, and confirms **"✓ adds up to the figure you clicked"**. Click a team **name** to see that team's own pending estimates instead. Zero figures are not clickable (there is nothing behind them).
+
 ### Counts vs. amounts
 A "count" is a number of **estimates** (not fee lines). An estimate with three fee lines counts once. (The old Excel counted rows, so counts can differ slightly from the old sheet; **amounts match**.)
 
 ### Conversions per month
 The bar chart counts estimates by the month **payment was received**. It starts from the first month in which a payment was recorded in the app.
-
-### Published reports
-"Publish today's report" saves a copy of the dashboard's numbers. Editing data later never changes a published copy.
 
 ---
 
@@ -292,7 +303,7 @@ The bar chart counts estimates by the month **payment was received**. It starts 
 
 | Parameter | Value |
 |---|---|
-| Password | at least 8 characters, stored hashed (scrypt) |
+| Password | at least 8 characters, stored hashed (PBKDF2-HMAC-SHA256, 600,000 rounds) |
 | Username | 3–30 characters: letters, digits, `.` `_` `-` |
 | Sign-in lasts | 7 days (then sign in again) |
 | Attachment / upload size | 10 MB |
@@ -302,7 +313,6 @@ The bar chart counts estimates by the month **payment was received**. It starts 
 | Notifications shown | latest 40 (the server never returns more than 100) |
 | API key roles | `read` · `sales` · `finance` |
 | Webhook | HTTPS only (plain http allowed only for localhost); one attempt, 8 second timeout; signed with HMAC-SHA256 |
-| Published reports listed | latest 60 |
 
 ### Environment variables (set when starting the server)
 
@@ -311,7 +321,8 @@ The bar chart counts estimates by the month **payment was received**. It starts 
 | `PORT` | `8080` | Port to listen on |
 | `HOST` | `127.0.0.1` | Use `0.0.0.0` to allow other computers to connect |
 | `DSR_DB` | `data/dsr.sqlite3` | Where the database file lives (uploaded files go in a `files/` folder beside it) |
-| `DSR_ADMIN_PASSWORD` | random | Password for the first `admin` account (otherwise a random one is printed once on first run) |
+| `DSR_PASSWORDLESS` | on for localhost | `1` = quick sign-in (click a name, **no password**); `0` = passwords required. If not set, quick sign-in is on **only** when the server listens on this computer alone (`HOST` is `127.0.0.1`/`localhost`, the default) and switches itself **off** when `HOST` opens it to the network. |
+| `DSR_ADMIN_PASSWORD` | random | Password for the first `admin` account. Only needed for password sign-in. |
 | `DSR_TODAY` | today | Pretend today is this date (`YYYY-MM-DD`) — for testing only |
 
 ---
@@ -352,7 +363,7 @@ Good to know:
 ## 11. Architecture (how it is built)
 
 ### In one paragraph
-A tiny web server written with **only Python's standard library** stores everything in a single **SQLite** file and serves a plain **HTML/JavaScript** page. There is nothing to install except Python 3.10 or newer. All business rules live in one small, testable module (`dsr/rules.py`); the server (`dsr/app.py`) checks who is allowed to do what, and the page (`web/app.js`) only displays and collects input.
+A tiny web server written with **only Python's standard library** stores everything in a single **SQLite** file and serves a plain **HTML/JavaScript** page. There is nothing to install except Python 3.9 or newer (the Python that comes with a Mac is fine). All business rules live in one small, testable module (`dsr/rules.py`); the server (`dsr/app.py`) checks who is allowed to do what, and the page (`web/app.js`) only displays and collects input.
 
 ### The big picture
 
@@ -416,7 +427,6 @@ erDiagram
 | `notifications` · `notif_reads` | The shared notification feed, and how far each person has read it. |
 | `audit` | The history log of every action. |
 | `files` | Attached documents (the files themselves are stored on disk). |
-| `snapshots` | Published daily reports (stored as a frozen copy). |
 | `users` · `sessions` · `sms` | Accounts, sign-in sessions, and the list of sales managers. |
 | `api_keys` · `settings` | Keys for other systems (only a hash is stored) and the webhook address. |
 
@@ -442,7 +452,8 @@ erDiagram
 | **Everything visible, actions restricted** | Matches how the team already shares the daily report. |
 
 ### Security in brief
-- Passwords are **hashed** (scrypt), never stored as typed. Sign-in uses an HTTP-only, same-site cookie.
+- Passwords are **hashed** (PBKDF2-SHA256), never stored as typed. Sign-in uses an HTTP-only, same-site cookie.
+- **Quick sign-in** (click a name, no password) exists for trying the app on your own computer. It is **automatically disabled** when the server is opened to the network, unless you force it with `DSR_PASSWORDLESS=1`.
 - API keys are shown **once**; only a hash is stored; keys can be revoked.
 - Every action is permission-checked **on the server** (hiding a button is never the only protection).
 - Uploaded files are stored with random names and served only to signed-in users, with a safe file type.
@@ -474,23 +485,29 @@ data/                created at run time: the database and uploaded files (not i
 ## 12. Installing, running and looking after it
 
 ### Requirements
-Python **3.10 or newer**. Nothing else. (Optional: `pip install openpyxl` to read Excel files for bulk upload and for the one-time import.)
+Python **3.9 or newer** (a Mac's built-in `python3` works). Nothing else. (Optional: `pip3 install openpyxl` to read Excel files for bulk upload and for the one-time import.)
+
+**Tip for the import command:** you don't have to type the file's path. Type `python3 -m dsr.import_xlsx ` (with a space at the end) and then **drag the Excel file from Finder into the Terminal window** — it fills in the path for you. Then add `--as-of 2026-10-13` (the date of the report).
 
 ### Start it
 ```bash
 python3 -m dsr
-# open http://localhost:8080
+# the Terminal prints:  Daily Sales Report is running.  Open  http://127.0.0.1:8080  ...
 ```
-On the **first run** the screen prints the password for the `admin` user (or set `DSR_ADMIN_PASSWORD` before starting). Sign in as `admin`, then open **Admin** to:
-1. add the **sales managers** (names as they appear on estimates),
-2. add **users** — a *sales* user is linked to one sales manager; *finance* users are not linked,
+Leave that Terminal window open while you use the app; press `Ctrl + C` to stop it.
+**Signing in — no password on your own computer.** When the server runs on your own computer (the default), the sign-in page simply shows everyone's name: **click your name and you are in.** On first run the only name is *Administrator*. Then open **Admin** to:
+1. add the **sales managers** (the import adds them for you),
+2. add **users**: press **Create logins for all sales managers** for a one-click start, and **+ Add user** for your finance people (a *sales* user is linked to one sales manager; *finance* users are not linked),
 3. (optional) create an **API key** and set the **webhook** for the CRM.
+
+> ⚠ **Quick sign-in means anyone who can open the page can pick any name — including Administrator.** That is fine for trying it out on your own computer. It **turns itself off** automatically if you start the server so that other computers can reach it (`HOST=0.0.0.0`), and then everyone needs a password (the first-run admin password is printed in the terminal, and the Admin tab can add password users). Before sharing it with the team, run with `DSR_PASSWORDLESS=0` and give each person a password.
 
 ### Load the old Excel (one time)
 ```bash
-pip install openpyxl
-python3 -m dsr.import_xlsx Revenue.xlsx --as-of 2026-10-13
+pip3 install openpyxl
+python3 -m dsr.import_xlsx "/path/to/Revenue.xlsx" --as-of 2026-10-13
 ```
+`--as-of` is the date of the report you are loading and must be written exactly as `YYYY-MM-DD` (anything else is rejected with a clear message). Load the workbook **once, before entering real data**. If the database already contains estimates the import refuses to run; add **`--reset`** to throw the existing estimates away and load the workbook again (users and sales managers are kept).
 It reads the three data sheets (*Current Month*, *Previous Month*, *Dropped till last Month*). The old **Summary** sheet is ignored and **Reporting** is the sheet the app reproduces. Notes:
 - The workbook has no payment/drop **dates**, so already-paid or dropped rows get the `--as-of` date (older drops get 30 Sep). Roll-forwards **before** the import month are therefore approximate; from then on, dates are real.
 - Dropped rows in the old sheet had no fee type, so they default to *Set-up fees*.
@@ -521,17 +538,16 @@ python3 -m unittest discover -s tests -t .
 
 ## 13. What it does not do (yet)
 
-- **No email sending.** The dashboard is live; Finance can publish a frozen copy. (A daily email linking to it is an easy add-on.)
+- **No email sending.** The dashboard is live. (A daily email linking to it is an easy add-on.)
 - **No part-payments** — payment is in full, by design.
-- **No automatic scheduling** of "Publish today's report" (it is a button).
-- **No HTTPS, login lock-out or password reset** built in (see Security).
+- **No HTTPS, login lock-out or password reset** built in (see Security). Quick sign-in has no passwords at all and is meant for your own computer only.
 - **Notifications are in the app**, not by email or phone push.
 - **Desktop only** — no phone layout.
 - **Imported history before the import month is approximate** (see section 12).
 - **Webhooks make one attempt** and do not retry.
 - **Customer names are free text** — the same customer typed two ways counts as two customers.
 
-Ideas that would add the most value next: a nightly auto-publish, an emailed link to the daily report, a customer master list (to avoid duplicate spellings), and reminder emails for overdue follow-ups.
+Ideas that would add the most value next: an emailed link to the dashboard, a customer master list (to avoid duplicate spellings), and reminder emails for overdue follow-ups.
 
 ---
 
@@ -555,11 +571,23 @@ Check the estimate's **Report month**. The app counts an estimate in its report 
 **"The follow-up board says 'No follow-up yet' but I called them."**
 Calls only count once they are **logged**. Open the estimate (or the board card) → **Log follow-up**.
 
+**"Failed to fetch" / "Can't reach the app".**
+The page is open but the app behind it is no longer running or has stopped answering. Look at the **Terminal window** where you ran `python3 -m dsr`: if it has returned to a prompt (or shows an error), start it again with `python3 -m dsr` and refresh the page. If the window shows a red "Traceback", copy those lines — they say exactly what went wrong. Also try opening **http://127.0.0.1:8080** (instead of `localhost`).
+
 **"I can't sign in / the page keeps asking me to sign in."**
-Sessions last 7 days. If the server was restarted with a different database file, the old sign-in is gone — sign in again.
+Sessions last 7 days. If the server was restarted with a different database file, the old sign-in is gone — sign in again. If you expected to just click a name but see a password form, the server is open to the network (`HOST=0.0.0.0`) so quick sign-in is off; use the admin password printed at first run, or start it with `DSR_PASSWORDLESS=1` if you really want it.
 
 **"The notification badge didn't appear."**
 It refreshes about every 20 seconds while the tab is visible. Click the 🔔 to refresh immediately.
+
+**"Import says: This database already contains estimates."**
+The workbook was already loaded. To load it again from scratch, add `--reset` to the import command (it removes the estimates and re-imports; users are kept).
+
+**"Import says: … is not a date."**
+The `--as-of` value must be exactly `YYYY-MM-DD`, for example `2026-10-13`. A stray character after the day (for example a `~` left over from pasting) is rejected.
+
+**"I clicked a number and nothing happened."**
+Figures that are zero have nothing behind them, so they are not clickable. Every non-zero figure on the dashboard opens its list.
 
 **"Upload says columns are missing."**
 Download the template from the upload dialog and keep its header names.

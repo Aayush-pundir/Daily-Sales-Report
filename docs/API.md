@@ -55,6 +55,7 @@ Finance and admin keys can still `PUT /api/estimates/{id}` directly. `GET /api/n
 | `POST /api/estimates/{id}/files` | `{filename, content: <base64 pdf/png/jpg>}` |
 | `POST /api/estimates/{id}/followups` | `{on_date, kind: Call\|Email\|WhatsApp\|Meeting\|Other, contact, note, next_date}` (sales/finance keys; pending estimates only) |
 | `GET /api/followups?min_age=30&sm=&flag=none\|overdue\|ok` | pending estimates older than `min_age` days with their follow-up timelines |
+| `GET /api/report/drill?month=2026-10&credit=team&team=Arshdeep&metric=converted` | the estimates behind one dashboard number. `metric` = opening / new / converted / dropped / closing; add `&bucket=31-60` to narrow *closing* to one age group, and `&category=Annual fees` to narrow to one fee type (then each row's `counted` is just that fee type's part); omit `team` for everyone (in team mode a team is `Arshdeep\|Meisheil`, primary first). The rows' `counted` values add up to the figure on the dashboard. |
 | `GET /api/report?month=2026-10&credit=team\|primary\|split` | the dashboard numbers |
 | `GET /api/export.csv` | all estimates |
 

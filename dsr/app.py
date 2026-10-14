@@ -5,7 +5,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-import base64, hashlib, hmac, urllib.request
+import base64, hashlib, hmac, traceback, urllib.request
 import mimetypes
 from . import db, rules, uploads
 
@@ -16,6 +16,15 @@ MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".sv
 
 def today():
     return date.fromisoformat(os.environ["DSR_TODAY"]) if os.environ.get("DSR_TODAY") else date.today()
+
+
+def passwordless():
+    """Quick sign-in (click a name, no password). On by default only when the server listens on this computer
+    alone; set DSR_PASSWORDLESS=1 / 0 to force it on / off."""
+    v = os.environ.get("DSR_PASSWORDLESS", "").lower()
+    if v in ("1", "true", "yes", "on"): return True
+    if v in ("0", "false", "no", "off"): return False
+    return os.environ.get("HOST", "127.0.0.1") in ("127.0.0.1", "localhost", "::1")
 
 
 class Err(Exception):
@@ -104,6 +113,8 @@ class H(BaseHTTPRequestHandler):
                 try:
                     user = self.user_for(c)
                     if u.path == "/api/login" and method == "POST": res = self.login(c, body)
+                    elif u.path == "/api/quick-users" and method == "GET": res = self.quick_users(c)
+                    elif u.path == "/api/quick-login" and method == "POST": res = self.quick_login(c, body)
                     else:
                         if not user: raise Err(401, "Please sign in.")
                         res = self.route(c, method, u.path, q, body, user)
@@ -111,6 +122,9 @@ class H(BaseHTTPRequestHandler):
                 finally: c.close()
             if getattr(self, "_events", None): self.fire_webhooks()
         except Err as e: return self.send(e.code, {"error": e.msg, **e.extra})
+        except Exception:                      # never drop the connection: that shows up in the browser as "Failed to fetch"
+            traceback.print_exc()
+            return self.send(500, {"error": "Something went wrong inside the app. The technical details are printed in the Terminal window where the app is running."})
         if isinstance(res, tuple): return self.send(200, res[0], res[1], res[2] if len(res) > 2 else ())
         self.send(200, res)
 
@@ -119,13 +133,28 @@ class H(BaseHTTPRequestHandler):
     do_PUT = lambda s: s.handle_any("PUT")
 
     # ---- auth
+    def _session(self, c, user_id):
+        tok = secrets.token_urlsafe(32)
+        c.execute("INSERT INTO sessions VALUES(?,?,?)", (tok, user_id, (datetime.now() + timedelta(days=7)).isoformat(timespec="seconds")))
+        c.execute("DELETE FROM sessions WHERE expires<?", (db.now(),))
+        return {"ok": True}, "application/json", [("Set-Cookie", f"sid={tok}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800")]
+
     def login(self, c, b):
         r = c.execute("SELECT * FROM users WHERE username=? AND active=1", (str(b.get("username", "")).strip().lower(),)).fetchone()
         if not r or not db.check_pw(str(b.get("password", "")), r["pw"]): raise Err(401, "Wrong username or password.")
-        tok = secrets.token_urlsafe(32)
-        c.execute("INSERT INTO sessions VALUES(?,?,?)", (tok, r["id"], (datetime.now() + timedelta(days=7)).isoformat(timespec="seconds")))
-        c.execute("DELETE FROM sessions WHERE expires<?", (db.now(),))
-        return {"ok": True}, "application/json", [("Set-Cookie", f"sid={tok}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800")]
+        return self._session(c, r["id"])
+
+    def quick_users(self, c):
+        """Quick sign-in: pick a name, no password. Only offered when passwordless() is true."""
+        if not passwordless(): return {"enabled": False, "users": []}
+        return {"enabled": True, "users": [dict(r) for r in c.execute(
+            "SELECT id,name,role,sm_name FROM users WHERE active=1 ORDER BY CASE role WHEN 'admin' THEN 0 WHEN 'finance' THEN 1 ELSE 2 END, name")]}
+
+    def quick_login(self, c, b):
+        if not passwordless(): raise Err(403, "Quick sign-in is switched off on this server.")
+        r = c.execute("SELECT id FROM users WHERE id=? AND active=1", (b.get("user_id"),)).fetchone()
+        if not r: raise Err(404, "No such user.")
+        return self._session(c, r["id"])
 
     # ---- routing
     def route(self, c, m, path, q, b, user):
@@ -137,6 +166,7 @@ class H(BaseHTTPRequestHandler):
         if P == ["meta"]:
             return {"today": today().isoformat(), "categories": rules.CATEGORIES, "buckets": rules.BUCKETS,
                     "sms": [r["name"] for r in c.execute("SELECT name FROM sms WHERE active=1 ORDER BY name")]}
+        if P == ["report", "drill"]: return self.report_drill(c, q)
         if P == ["report"]: return self.report(c, q)
         if P == ["estimates", "template.csv"]: return uploads.TEMPLATE, "text/csv", [("Content-Disposition", 'attachment; filename="estimate-upload-template.csv"')]
         if P == ["estimates", "upload"] and m == "POST": return self.bulk_upload(c, b, user)
@@ -156,7 +186,6 @@ class H(BaseHTTPRequestHandler):
             return self.files(c, m, int(P[1]), P[3:], b, user)
         if P[0] == "estimates" and len(P) >= 2 and P[1].isdigit():
             return self.estimate_action(c, m, int(P[1]), P[2] if len(P) > 2 else "", b, user)
-        if P[0] == "snapshots": return self.snapshots(c, m, P, b, user)
         if P == ["export.csv"]: return self.export(c, q)
         if P[0] in ("users", "sms", "keys", "webhook"): return self.admin(c, m, P, b, user)
         raise Err(404, "No such endpoint.")
@@ -165,14 +194,27 @@ class H(BaseHTTPRequestHandler):
     def report(self, c, q):
         ym = q.get("month") or today().strftime("%Y-%m")
         if not re.fullmatch(r"\d{4}-\d{2}", ym): raise Err(400, "month must be YYYY-MM")
-        as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
+        try: as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
+        except ValueError: raise Err(400, "as_on must be YYYY-MM-DD")
         r = rules.build_report(db.load_estimates(c), ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
         r["open_change_requests"] = c.execute("SELECT COUNT(*) FROM change_requests WHERE status='open'").fetchone()[0]
         r["followups_needed"] = sum(1 for x in self.followup_board(c, {}) if x["flag"] != "ok")
-        s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
-        r["last_published"] = dict(s) if s else None
         return r
+
+    def report_drill(self, c, q):
+        ym = q.get("month") or today().strftime("%Y-%m")
+        if not re.fullmatch(r"\d{4}-\d{2}", ym): raise Err(400, "month must be YYYY-MM")
+        metric = q.get("metric")
+        if metric not in rules.METRICS: raise Err(400, "metric must be one of " + ", ".join(rules.METRICS))
+        if q.get("bucket") and q["bucket"] not in rules.BUCKETS: raise Err(400, "unknown age group")
+        if q.get("category") and q["category"] not in rules.CATEGORIES: raise Err(400, "unknown fee type")
+        try: as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
+        except ValueError: raise Err(400, "as_on must be YYYY-MM-DD")
+        credit = q.get("credit") if q.get("credit") in ("primary", "split") else "team"
+        rows = rules.drill(db.load_estimates(c), ym, as_on, credit, q.get("team") or None, metric, q.get("bucket") or None, q.get("category") or None)
+        return {"month": ym, "as_on": min(rules.month_bounds(ym)[1], as_on).isoformat(), "credit": credit, "team": q.get("team") or None,
+                "metric": metric, "bucket": q.get("bucket") or None, "category": q.get("category") or None, "count": len(rows), "counted": sum(r["counted"] for r in rows), "rows": rows}
 
     def list_estimates(self, c, q):
         t = today(); out = []
@@ -185,6 +227,8 @@ class H(BaseHTTPRequestHandler):
             e["team"] = rules.team_label(e["owners"]); e["categories"] = [l["category"] for l in e["lines"]]
             if q.get("status") and e["status"] != q["status"]: continue
             if q.get("sm") and q["sm"] not in e["owners"].split("|"): continue
+            if q.get("team") and e["owners"] != q["team"]: continue                          # exactly this team, in this order
+            if q.get("primary") and e["owners"].split("|")[0] != q["primary"]: continue      # this person is the primary
             if q.get("category") and q["category"] not in e["categories"]: continue
             if q.get("bucket") and e["bucket"] != q["bucket"]: continue
             if q.get("drop_requested") == "1" and not (e["status"] == "pending" and e["drop_requested_by"]): continue
@@ -202,20 +246,6 @@ class H(BaseHTTPRequestHandler):
                         e["closed_on"] or "", e["invoice_no"] or "", e["invoice_date"] or "", e["payment_ref"] or "", e["drop_reason"] or ""])
         return buf.getvalue(), "text/csv", [("Content-Disposition", f'attachment; filename="estimates-{today()}.csv"')]
 
-    def snapshots(self, c, m, P, b, user):
-        if m == "GET" and len(P) == 1:
-            return [dict(r) for r in c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 60")]
-        if m == "GET":
-            r = c.execute("SELECT * FROM snapshots WHERE day=?", (P[1],)).fetchone()
-            if not r: raise Err(404, "No report published for that day.")
-            return {**dict(r), "data": json.loads(r["data"])}
-        need(user, "finance")
-        d = today().isoformat()
-        rep = self.report(c, {"month": d[:7], "as_on": d})
-        c.execute("INSERT OR REPLACE INTO snapshots VALUES(?,?,?,?)", (d, user["name"], db.now(), json.dumps(rep, default=str)))
-        return {"ok": True, "day": d}
-
-    # ---- follow-ups
     def followups_for(self, c, ids):
         out = {i: [] for i in ids}
         if ids:
@@ -233,7 +263,8 @@ class H(BaseHTTPRequestHandler):
             if q.get("sm") and q["sm"] not in e["owners"].split("|"): continue
             if q.get("flag") and q["flag"] != flag: continue
             out.append({"id": e["id"], "number": e["number"], "customer": e["customer"], "owners": e["owners"], "team": rules.team_label(e["owners"]),
-                        "total": e["total"], "age": age, "flag": flag, "followups": f, "version": e["version"],
+                        "total": e["total"], "age": age, "flag": flag, "followups": f, "version": e["version"], "est_date": e["est_date"],
+                        "categories": [l["category"] for l in e["lines"]],
                         "last": f[-1]["on_date"] if f else None, "next": next((x["next_date"] for x in reversed(f) if x["next_date"]), None) if f else None})
         order = {"none": 0, "overdue": 1, "ok": 2}
         out.sort(key=lambda r: (order[r["flag"]], -r["age"]))
@@ -431,7 +462,14 @@ class H(BaseHTTPRequestHandler):
         args = []
         if q.get("status"): sql += " WHERE cr.status=?"; args.append(q["status"])
         if q.get("estimate_id", "").isdigit(): sql += (" AND" if args else " WHERE") + " cr.estimate_id=?"; args.append(int(q["estimate_id"]))
-        return [self._cr_row(r) for r in c.execute(sql + " ORDER BY cr.id DESC LIMIT 200", args)]
+        rows = [self._cr_row(r) for r in c.execute(sql + " ORDER BY cr.id DESC LIMIT 200", args)]
+        info = {e["id"]: e for e in db.load_estimates(c)} if rows else {}       # so the Finance desk can search / filter / sort them like any estimate
+        for r in rows:
+            e = info.get(r["estimate_id"])
+            r["est_date"] = e["est_date"] if e else None
+            r["categories"] = [l["category"] for l in e["lines"]] if e else []
+            r["total"] = e["total"] if e else 0
+        return rows
 
     def change_decision(self, c, rid, act, b, user):
         r = c.execute("SELECT * FROM change_requests WHERE id=?", (rid,)).fetchone()
@@ -496,6 +534,17 @@ class H(BaseHTTPRequestHandler):
                 c.execute("INSERT OR REPLACE INTO settings VALUES('webhook_url',?)", (url,))
                 if b.get("secret"): c.execute("INSERT OR REPLACE INTO settings VALUES('webhook_secret',?)", (b["secret"],))
             return {"url": (c.execute("SELECT v FROM settings WHERE k='webhook_url'").fetchone() or [""])[0], "has_secret": bool(c.execute("SELECT 1 FROM settings WHERE k='webhook_secret'").fetchone())}
+        if P == ["users", "bulk-sales"] and m == "POST":
+            if user["role"] != "admin": raise Err(403, "Admins only.")
+            made = []
+            for sm in c.execute("SELECT name FROM sms WHERE active=1 ORDER BY name").fetchall():
+                if c.execute("SELECT 1 FROM users WHERE role='sales' AND sm_name=?", (sm["name"],)).fetchone(): continue
+                base = re.sub(r"[^a-z0-9]+", ".", sm["name"].lower()).strip(".")[:28] or "sales"
+                uname, n = base, 1
+                while c.execute("SELECT 1 FROM users WHERE username=?", (uname,)).fetchone(): n += 1; uname = f"{base}{n}"
+                c.execute("INSERT INTO users(username,name,pw,role,sm_name) VALUES(?,?,?,?,?)", (uname, sm["name"], db.hash_pw(secrets.token_urlsafe(12)), "sales", sm["name"]))
+                made.append(sm["name"])
+            return {"created": made}
         if user["role"] != "admin":
             if P[0] == "users" and m == "GET": raise Err(403, "Admins only.")
             if P[0] == "sms" and m == "GET": return [dict(r) for r in c.execute("SELECT * FROM sms ORDER BY name")]
@@ -533,14 +582,17 @@ def bootstrap():
     if not c.execute("SELECT 1 FROM users").fetchone():
         pw = os.environ.get("DSR_ADMIN_PASSWORD") or secrets.token_urlsafe(9)
         c.execute("INSERT INTO users(username,name,pw,role) VALUES('admin','Administrator',?, 'admin')", (db.hash_pw(pw),))
-        c.commit(); print(f"\n  First run: sign in as  admin  /  {pw}   (create real users from the Admin tab)\n")
+        c.commit()
+        if passwordless(): print("\n  First run: just click  Administrator  on the sign-in page, then add your people in the Admin tab.\n")
+        else: print(f"\n  First run: sign in as  admin  /  {pw}   (create real users from the Admin tab)\n")
     c.close()
 
 
 def main():
     bootstrap()
     port = int(os.environ.get("PORT", 8080))
-    print(f"Daily Sales Report on http://localhost:{port}")
+    print(f"Daily Sales Report is running.  Open  http://127.0.0.1:{port}  in your browser  (leave this window open; Ctrl+C stops it)")
+    print("Sign-in: " + ("QUICK (click a name, no password) — only because this server is reachable from this computer alone" if passwordless() else "password"))
     ThreadingHTTPServer((os.environ.get("HOST", "127.0.0.1"), port), H).serve_forever()
 
 

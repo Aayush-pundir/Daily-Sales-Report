@@ -45,6 +45,52 @@ class Rollforward(unittest.TestCase):
     def test_buckets(self):
         self.assertEqual([rules.bucket(n) for n in (0, 30, 31, 60, 61, 90, 91)], ["0-30", "0-30", "31-60", "31-60", "61-90", "61-90", "90+"])
 
+class DrillMatchesReport(unittest.TestCase):
+    """Every number on the dashboard must equal the sum of the estimates its drill-down lists."""
+    def data(self):
+        E = []
+        def add(n, d, owners, status="pending", closed=None, per=None, lines=(("Annual fees", 100),)):
+            e = est(n, d, owners, status, closed, lines); e["id"] = len(E) + 1; e["period"] = per or d[:7]; E.append(e)
+        add("a1", "2026-06-10", "A"); add("a2", "2026-08-05", "A|B", "received", "2026-10-03", lines=(("Annual fees", 70), ("Set-up fees", 30)))
+        add("a3", "2026-09-20", "B|A"); add("a4", "2026-07-01", "B", "dropped", "2026-10-09"); add("a5", "2026-10-02", "A"); add("a6", "2026-10-04", "C|A|B", "received", "2026-10-11")
+        add("a7", "2026-10-08", "B", per="2026-09"); add("a8", "2026-04-01", "A", "dropped", "2026-09-30"); add("a9", "2026-10-12", "A|B", per="2026-10", lines=(("Integration", 55),))
+        return E
+
+    def test_every_cell(self):
+        E = self.data()
+        for month, as_on in (("2026-10", date(2026, 10, 13)), ("2026-10", date(2026, 10, 5)), ("2026-09", date(2026, 10, 13))):
+            for credit in ("team", "primary", "split"):
+                rep = rules.build_report(E, month, as_on, credit)
+                rows = [(None, rep["total"])] + [(t["team"] if credit != "team" else "|".join(t["team"].split(" & ")), t) for t in rep["teams"]]
+                for key, cell in rows:
+                    for m in rules.METRICS:
+                        got = rules.drill(E, month, as_on, credit, key, m)
+                        self.assertAlmostEqual(sum(r["counted"] for r in got), cell[m], msg=f"{credit} {month} {as_on} {key} {m}")
+                        self.assertAlmostEqual(sum(r["share"] for r in got), cell[m + "_n"], msg=f"count {credit} {key} {m}")
+                    for b in rules.BUCKETS:
+                        got = rules.drill(E, month, as_on, credit, key, "closing", b)
+                        self.assertAlmostEqual(sum(r["counted"] for r in got), cell["ageing"][b], msg=f"age {credit} {key} {b}")
+
+class DrillByFeeType(unittest.TestCase):
+    def test_fee_type_tables_match(self):
+        E = DrillMatchesReport().data()
+        for month, as_on in (("2026-10", date(2026, 10, 13)), ("2026-09", date(2026, 10, 13))):
+            for credit in ("team", "primary", "split"):
+                rep = rules.build_report(E, month, as_on, credit)
+                for m in rules.METRICS:
+                    for cat in rules.CATEGORIES:
+                        got = sum(r["counted"] for r in rules.drill(E, month, as_on, credit, None, m, None, cat))
+                        self.assertAlmostEqual(got, rep["segments"][m][cat], msg=f"{credit} {month} {m} {cat}")
+                for b in rules.BUCKETS:
+                    for cat in rules.CATEGORIES:
+                        got = sum(r["counted"] for r in rules.drill(E, month, as_on, credit, None, "closing", b, cat))
+                        self.assertAlmostEqual(got, rep["ageing_segments"][b][cat], msg=f"age {credit} {month} {b} {cat}")
+
+    def test_pending_rows_carry_an_id(self):
+        E = DrillMatchesReport().data()
+        top = rules.build_report(E, "2026-10", date(2026, 10, 13))["pending_by_value"]
+        self.assertTrue(top and all("id" in r for r in top))
+
 class Followups(unittest.TestCase):
     T = date(2026, 10, 13)
     def fu(self, on, nxt=None, i=1): return {"id": i, "on_date": on, "next_date": nxt}
