@@ -83,6 +83,50 @@ def validate_followup(d, est_date, today):
     return c, errs
 
 
+DIFF_FIELDS = ("number", "est_date", "period", "customer", "owners", "notes", "lines")
+
+
+def current_values(e):
+    return {"number": e["number"], "est_date": e["est_date"], "period": e["period"] or e["est_date"][:7], "customer": e["customer"],
+            "owners": e["owners"].split("|") if e["owners"] else [], "notes": e["notes"] or "",
+            "lines": [{"category": l["category"], "amount": l["amount"]} for l in e["lines"]]}
+
+
+def _norm(field, v):
+    if field == "lines": return sorted([l["category"], round(float(l["amount"]), 2)] for l in v)
+    if field == "owners": return list(v) if isinstance(v, list) else (v.split("|") if v else [])
+    return v
+
+
+def diff_estimate(e, clean):
+    """Field-level changes between the stored estimate `e` and the validated proposal `clean`."""
+    cur = current_values(e)
+    new = {**clean, "owners": clean["owners"].split("|") if clean["owners"] else [], "lines": clean["lines"]}
+    return {f: {"old": _norm(f, cur[f]), "new": _norm(f, new[f])} for f in DIFF_FIELDS if _norm(f, cur[f]) != _norm(f, new[f])}
+
+
+def inr(n):
+    s, neg = f"{abs(round(n)):d}", n < 0
+    head, tail = (s[:-3], s[-3:]) if len(s) > 3 else ("", s)
+    groups = []
+    while len(head) > 2: groups.insert(0, head[-2:]); head = head[:-2]
+    if head: groups.insert(0, head)
+    return ("-" if neg else "") + ",".join(groups + [tail])
+
+
+def describe_diff(changes):
+    label = {"number": "estimate number", "est_date": "estimate date", "period": "report month", "customer": "customer", "owners": "sales manager", "notes": "notes", "lines": "fees"}
+    out = []
+    for f, ch in changes.items():
+        if f == "lines":
+            o, n = sum(a for _, a in ch["old"]), sum(a for _, a in ch["new"])
+            out.append(f"fees ₹{inr(o)} → ₹{inr(n)}")
+        elif f == "owners": out.append("sales manager " + " & ".join(ch["old"]) + " → " + " & ".join(ch["new"]))
+        elif f == "notes": out.append("notes")
+        else: out.append(f"{label[f]} {ch['old']} → {ch['new']}")
+    return "; ".join(out)
+
+
 def team_label(owners):
     return " & ".join(owners.split("|"))
 

@@ -10,7 +10,7 @@ const teamHtml = t => { const [p, ...rest] = String(t).split(" & "); return `<b>
 const CAT_COLOR = { "Annual fees": "var(--s1)", "Set-up fees": "var(--s2)", "Integration": "var(--s3)", "Customisation": "var(--s4)" };
 const AGE_COLOR = ["var(--a0)", "var(--a1)", "var(--a2)", "var(--a3)"];
 
-const S = { me: null, meta: null, tab: "dashboard", month: null, credit: "team", filters: { status: "pending" } };
+const S = { unread: 0, me: null, meta: null, tab: "dashboard", month: null, credit: "team", filters: { status: "pending" } };
 
 async function api(path, opt = {}) {
   const r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined });
@@ -46,9 +46,10 @@ function render() {
   if (S.me.role === "admin") tabs.push(["admin", "Admin"]);
   app.innerHTML = `<header class="top"><span class="brand">Daily Sales Report</span>
     <nav>${tabs.map(([k, l]) => `<button data-tab="${k}" ${S.tab === k ? 'aria-current="page"' : ""}>${l}</button>`).join("")}</nav>
-    <span class="who">${esc(S.me.name)} · ${esc(S.me.role)}${S.me.sm_name ? " (" + esc(S.me.sm_name) + ")" : ""}<button class="btn sm" id="out">Sign out</button></span></header>
+    <button class="bell" id="bell" aria-label="Notifications"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="badge" id="badge" ${S.unread ? "" : "hidden"}>${S.unread}</span></button><span class="who">${esc(S.me.name)} · ${esc(S.me.role)}${S.me.sm_name ? " (" + esc(S.me.sm_name) + ")" : ""}<button class="btn sm" id="out">Sign out</button></span></header>
     <main id="main"></main>`;
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
+  $("#bell").onclick = openNotifications; pollNotifications(true);
   $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; render(); };
   ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, rules: rulesTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
 }
@@ -62,6 +63,30 @@ function renderLogin(app) {
     try { await api("login", { method: "POST", body: { username: e.target.u.value, password: e.target.p.value } }); await boot(); }
     catch (er) { $("#le").innerHTML = `<div class="err">${esc(er.message)}</div>`; }
   };
+}
+
+/* ---------- notifications ---------- */
+async function pollNotifications(first) {
+  if (!S.me) return;
+  try {
+    const n = await api("notifications?limit=1"), prev = S.unread || 0;
+    S.unread = n.unread; const b = $("#badge"); if (b) { b.textContent = n.unread; b.hidden = !n.unread; }
+    if (!first && n.unread > prev && n.items[0]) {
+      toast(n.items[0].text);
+      const quiet = !$("#dlg").open && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "");
+      if (quiet && ["dashboard", "finance", "estimates"].includes(S.tab)) render();   // keep every screen in step without disturbing anyone mid-edit
+    }
+  } catch { /* signed out or offline: try again later */ }
+}
+if (!window.__poll) window.__poll = setInterval(() => document.visibilityState === "visible" && pollNotifications(false), 20000);
+async function openNotifications() {
+  const n = await api("notifications?limit=40");
+  modal("Notifications", n.items.length ? `<ul class="notes">${n.items.map(i => `<li class="${i.unread ? "unread" : ""}"><div>${esc(i.text)}</div><div class="muted">${fstamp(i.at)}</div><div class="n-act"><button class="btn sm" data-n="${i.estimate_id}">${i.open && can("finance") ? "Review &amp; decide" : "Open estimate"}</button></div></li>`).join("")}</ul>` : `<div class="muted">Nothing yet.</div>`,
+    `<button class="btn primary" id="cx">Close</button>`, d => {
+      $("#cx").onclick = closeModal;
+      d.querySelectorAll("[data-n]").forEach(b => b.onclick = () => detail(+b.dataset.n));
+    });
+  await api("notifications/read", { method: "POST", body: {} }); S.unread = 0; const b = $("#badge"); if (b) b.hidden = true;
 }
 
 /* ---------- dialog helper ---------- */
@@ -89,7 +114,7 @@ async function dashboard(el) {
     <label class="f">Credit<select id="split"><option value="team">Team, primary first</option><option value="primary" ${S.credit === "primary" ? "selected" : ""}>Primary salesperson only</option><option value="split" ${S.credit === "split" ? "selected" : ""}>Split equally</option></select></label>
     <a class="btn" href="/api/export.csv" download>Export CSV</a>
     ${can("finance") ? `<button class="btn primary" id="pub">Publish today's report</button>` : ""}</div>
-  ${(r.pending_drop_requests && can("finance")) || r.followups_needed ? `<div class="attn">${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
+  ${(r.pending_drop_requests && can("finance")) || r.followups_needed || r.open_change_requests ? `<div class="attn">${r.open_change_requests ? `<button id="goCr">${r.open_change_requests} change request${r.open_change_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}${r.followups_needed ? `<button id="goFu">${r.followups_needed} estimate${r.followups_needed > 1 ? "s" : ""} over 30 days with no current follow-up →</button>` : ""}${r.pending_drop_requests && can("finance") ? `<button id="goDrops">${r.pending_drop_requests} drop request${r.pending_drop_requests > 1 ? "s" : ""} waiting for finance →</button>` : ""}</div>` : ""}
   <div class="roll">
     ${[["Opening estimates", t.opening, t.opening_n], ["New estimates raised", t.new, t.new_n, "+"], ["Converted to tax invoice", t.converted, t.converted_n, "−"], ["Dropped / written off", t.dropped, t.dropped_n, "−"], ["Closing estimates (pending)", t.closing, t.closing_n, "="]]
       .map(([l, v, n, op]) => `<div class="k">${op ? `<span class="op">${op}</span>` : ""}<div class="lab">${l}</div><div class="val num" data-tip="₹ ${inr(v)}">₹ ${compact(v)}</div><div class="cnt num">${S.credit === "split" ? n.toFixed(1) : n} estimate${n === 1 ? "" : "s"}</div></div>`).join("")}
@@ -112,6 +137,7 @@ async function dashboard(el) {
   $("#mon").onchange = e => { S.month = e.target.value; render(); };
   $("#split").onchange = e => { S.credit = e.target.value; render(); };
   if ($("#pub")) $("#pub").onclick = async () => { try { await api("snapshots", { method: "POST", body: {} }); toast("Report published"); render(); } catch (e) { toast(e.message); } };
+  if ($("#goCr")) $("#goCr").onclick = () => { if (can("finance")) S.tab = "finance"; else { S.filters = { status: "pending", change_requested: "1" }; S.tab = "estimates"; } render(); };
   if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
   activate(el, "tr[data-team]", tr => { S.filters = { status: "pending", sm: tr.dataset.team.split(" & ")[0] }; S.tab = "estimates"; render(); });
@@ -161,13 +187,14 @@ async function estimates(el) {
     <label class="f">Sales manager<select id="fm">${opt(S.meta.sms, f.sm, "All")}</select></label>
     <label class="f">Fee type<select id="fc">${opt(S.meta.categories, f.category, "All")}</select></label>
     <label class="f">Age<select id="fb">${opt(S.meta.buckets, f.bucket, "All")}</select></label>
+    <label class="f">Change requests<select id="fcr"><option value="">All</option><option value="1" ${f.change_requested === "1" ? "selected" : ""}>Awaiting finance</option></select></label>
     ${can("sales") ? `<button class="btn" id="up">Upload file…</button><button class="btn primary" id="new">+ New estimate</button>` : ""}</div>
     <div class="card scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th>Status</th><th class="r">Age</th></tr></thead><tbody>
     ${rows.map(r => `<tr class="click" tabindex="0" data-id="${r.id}"><td>${esc(r.number)}</td><td>${fdate(r.est_date)}</td><td class="clip" title="${esc(r.customer)}">${esc(r.customer)}</td><td>${teamHtml(r.team)}</td>
       <td><span class="fees">${r.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td>
-      <td class="r num">${inr(r.total)}</td><td>${pill(r)}</td><td class="r num">${r.age != null ? r.age + "d" : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>`}</tbody></table></div>`;
+      <td class="r num">${inr(r.total)}</td><td>${pill(r)}${r.change_requested ? ' <span class="pill cr">change requested</span>' : ""}</td><td class="r num">${r.age != null ? r.age + "d" : ""}</td></tr>`).join("") || `<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>`}</tbody></table></div>`;
   const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
-  set("#fs", "status"); set("#fm", "sm"); set("#fc", "category"); set("#fb", "bucket");
+  set("#fcr", "change_requested"); set("#fs", "status"); set("#fm", "sm"); set("#fc", "category"); set("#fb", "bucket");
   $("#fq").onkeydown = e => { if (e.key === "Enter") { f.q = e.target.value; render(); } }; $("#fq").onblur = e => { if (e.target.value !== (f.q || "")) { f.q = e.target.value; render(); } };
   if ($("#new")) $("#new").onclick = () => editor();
   if ($("#up")) $("#up").onclick = () => uploadDialog();
@@ -175,11 +202,11 @@ async function estimates(el) {
 }
 const pill = r => r.status === "pending" && r.drop_requested_by ? `<span class="pill dropreq">drop requested</span>` : `<span class="pill ${r.status}">${r.status}</span>`;
 
-function editor(e) {
+function editor(e, request = false) {
   const isNew = !e, mine = S.me.sm_name, cats = S.meta.categories;
   const lines = Object.fromEntries((e?.lines || []).map(l => [l.category, l.amount]));
   const own = e ? e.owners.split("|") : (mine ? [mine] : []);
-  modal(isNew ? "New estimate" : "Edit " + esc(e.number), `<form class="form" id="ef">
+  modal(isNew ? "New estimate" : (request ? "Request change · " : "Edit ") + esc(e.number), `${request ? `<p class="muted" style="margin-top:0">Change what is wrong and tell finance why. Finance reviews it; any finance person can approve or reject, and everyone is notified. Nothing changes until it is approved.</p>` : ""}<form class="form" id="ef">
     <label>Estimate number<input name="number" required value="${esc(e?.number || "")}" placeholder="EST-26-27/264"></label>
     <label>Estimate date<input name="est_date" type="date" required max="${S.meta.today}" value="${e?.est_date || S.meta.today}"></label>
     <label class="full">Customer<input name="customer" required value="${esc(e?.customer || "")}"></label>
@@ -188,8 +215,9 @@ function editor(e) {
     <div class="full"><div class="muted" style="font-size:12px;margin-bottom:4px">Fees (₹, exclusive of tax — leave blank if not applicable)</div><div class="form">${cats.map(c => `<label><span><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${CAT_COLOR[c]};margin-right:5px"></i>${c}</span><input type="number" min="0" step="0.01" name="cat_${esc(c)}" value="${lines[c] ?? ""}"></label>`).join("")}</div></div>
     <label>Report month<input name="period" type="month" required max="${S.meta.today.slice(0, 7)}" value="${e?.period || S.meta.today.slice(0, 7)}"></label><div class="muted full" style="font-size:12px;margin-top:-6px">The month this estimate is counted in (normally the estimate date's month).</div>
     ${isNew ? `<label class="full">Estimate PDF from finance (optional — attach it so everyone can see the source)<input type="file" name="pdf" accept=".pdf,.png,.jpg,.jpeg"></label>` : ""}
-    <label class="full">Notes<textarea name="notes" rows="2">${esc(e?.notes || "")}</textarea></label></form><div id="ee"></div>`,
-    `<button class="btn" id="cx">Cancel</button><button class="btn primary" id="sv">Save</button>`, () => {
+    <label class="full">Notes<textarea name="notes" rows="2">${esc(e?.notes || "")}</textarea></label>
+    ${request ? `<label class="full">Why is this change needed? (finance will see this)<textarea name="reason" rows="2" required placeholder="e.g. The revised PDF from finance shows ₹2,60,000"></textarea></label>` : ""}</form><div id="ee"></div>`,
+    `<button class="btn" id="cx">Cancel</button><button class="btn primary" id="sv">${request ? "Send to finance" : "Save"}</button>`, () => {
       $("#cx").onclick = closeModal;
       $("#sv").onclick = async () => {
         const f = $("#ef"); if (!f.reportValidity()) return;
@@ -197,6 +225,7 @@ function editor(e) {
           owners: [f.primary.value, ...[...f.querySelectorAll("[name=own]:checked")].map(x => x.value)],
           lines: cats.map(c => ({ category: c, amount: f["cat_" + c].value })).filter(l => l.amount !== "" && +l.amount !== 0) };
         try {
+          if (request) { await api(`estimates/${e.id}/change-requests`, { method: "POST", body: { ...body, reason: f.reason.value } }); closeModal(); toast("Sent to finance — everyone has been notified"); render(); return; }
           const r = await api(isNew ? "estimates" : "estimates/" + e.id, { method: isNew ? "POST" : "PUT", body });
           const pdf = isNew && f.pdf.files[0];
           if (pdf) { try { await api(`estimates/${r.id}/files`, { method: "POST", body: { filename: pdf.name, content: await b64(pdf) } }); } catch (er) { toast("Saved, but the file was not attached: " + er.message); } }
@@ -270,15 +299,29 @@ function followupForm(e) {
     });
 }
 
+const FIELD = { number: "Estimate number", est_date: "Estimate date", period: "Report month", customer: "Customer", owners: "Sales manager(s)", notes: "Notes", lines: "Fees" };
+const fv = (f, v) => f === "lines" ? (v.map(([c, a]) => `${esc(c)} ₹${inr(a)}`).join(", ") || "—") : f === "owners" ? esc(v.join(" & ")) : f === "est_date" ? fdate(v) : f === "period" ? fmonth(v) : (esc(v) || "—");
+const diffTable = ch => `<table class="diff"><tbody>${Object.entries(ch).map(([f, c]) => `<tr><th>${FIELD[f]}</th><td class="old">${fv(f, c.old)}</td><td class="arrow">→</td><td class="new">${fv(f, c.new)}</td></tr>`).join("")}</tbody></table>`;
+const fstamp = at => (at || "").replace("T", " ").slice(0, 16);
+async function crDecide(cr, decision, after) {
+  const run = async note => { try { await api(`change-requests/${cr.id}/decision`, { method: "POST", body: { decision, note } }); closeModal(); toast(decision === "approve" ? "Change approved and applied" : "Change rejected"); (after || render)(); } catch (er) { const x = $("#ee"); if (x) x.innerHTML = `<div class="err">${esc(er.message)}</div>`; else toast(er.message); } };
+  if (decision === "approve") return run("");
+  modal("Reject change · " + esc(cr.number), `<p class="muted" style="margin-top:0">${esc(cr.requested_by)} asked: ${esc(cr.summary)}</p><label class="f" style="font-size:13px">Why is it rejected? (sales will see this)<textarea id="rs" rows="3"></textarea></label><div id="ee"></div>`,
+    `<button class="btn" id="cx">Cancel</button><button class="btn danger" id="go">Reject</button>`, () => { $("#cx").onclick = closeModal; $("#go").onclick = () => run($("#rs").value); });
+}
+const crCard = (cr, actions = true) => `<div class="cr"><div><b>${esc(cr.requested_by)}</b> <span class="muted">asked for a change · ${fstamp(cr.requested_at)}</span></div><div class="cr-why">“${esc(cr.reason)}”</div>${diffTable(cr.changes)}${actions && can("finance") ? `<div class="cr-act"><button class="btn sm primary" data-cr-ok="${cr.id}">Approve &amp; apply</button><button class="btn sm danger" data-cr-no="${cr.id}">Reject…</button></div>` : ""}</div>`;
+
 async function detail(id) {
   const e = await api("estimates/" + id), mineOrAdmin = S.me.role === "admin" || (S.me.sm_name && e.owners.split("|").includes(S.me.sm_name));
+  const openReq = (e.change_requests || []).find(r => r.status === "open");
   const btns = [];
   if (e.status === "pending") {
     if (can("finance")) btns.push(`<button class="btn primary" id="a-rec">Record payment…</button>`);
     if (can("finance") && e.drop_requested_by) btns.push(`<button class="btn" id="a-rej">Reject drop</button>`, `<button class="btn danger" id="a-app">Approve drop</button>`);
     else if (can("finance")) btns.push(`<button class="btn danger" id="a-drop">Drop…</button>`);
     if (S.me.role === "sales" && mineOrAdmin && !e.drop_requested_by) btns.push(`<button class="btn danger" id="a-dreq">Propose drop…</button>`);
-    if (can("sales") && mineOrAdmin) btns.push(`<button class="btn" id="a-edit">Edit</button>`);
+    if (can("finance")) btns.push(`<button class="btn" id="a-edit">Edit</button>`);
+    if (S.me.role === "sales" && mineOrAdmin && !openReq) btns.push(`<button class="btn" id="a-req">Request change…</button>`);
     if (can("finance") || mineOrAdmin) btns.push(`<button class="btn" id="a-fu">Log follow-up</button>`);
   } else if (S.me.role === "admin") btns.push(`<button class="btn" id="a-reopen">Reopen…</button>`);
   const kv = [["Customer", esc(e.customer)], ["Report month", fmonth(e.period)], ["Estimate date", fdate(e.est_date) + (e.age != null ? ` · ${e.age} days old` : "")], ["Primary salesperson", esc(e.owners.split("|")[0])], ...(e.owners.includes("|") ? [["Also credited", esc(e.owners.split("|").slice(1).join(", "))]] : []),
@@ -288,11 +331,13 @@ async function detail(id) {
   if (e.drop_requested_by && e.status === "pending") kv.push(["Drop requested", `by ${esc(e.drop_requested_by)} on ${fdate(e.drop_requested_on)}: “${esc(e.drop_reason)}”`]);
   if (e.notes) kv.push(["Notes", esc(e.notes)]);
   kv.push(["Documents", (e.files.map(f => `<a href="/api/estimates/${e.id}/files/${f.id}">${esc(f.name)}</a> <span class="muted">${Math.round(f.size / 1024)} KB · ${esc(f.uploaded_by)}</span>`).join("<br>") || '<span class="muted">none</span>') + (can("sales") && mineOrAdmin || can("finance") ? `<br><label class="btn sm" style="display:inline-block;margin-top:6px;cursor:pointer">Attach estimate PDF/image<input type="file" id="att" accept=".pdf,.png,.jpg,.jpeg" hidden></label>` : "")]);
-  modal(`${esc(e.number)} ${pill(e)}`, `<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+  modal(`${esc(e.number)} ${pill(e)}`, `${openReq ? `<div class="banner"><b>Change requested — waiting for finance</b>${crCard(openReq)}${openReq.requested_by === S.me.name || S.me.role === "admin" ? `<div class="cr-act"><button class="btn sm" id="cr-wd">Withdraw request</button></div>` : ""}</div>` : ""}${(e.change_requests || []).filter(r => r.status === "rejected").slice(0, 1).map(r => `<div class="banner rej"><b>Last change request was rejected</b> by ${esc(r.decided_by)}: ${esc(r.decision_note)}</div>`).join("")}<dl class="kv">${kv.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     <h3 style="font-size:13px;margin-top:14px">Follow-ups (${e.followups.length})</h3>${timeline(e.followups, e.status === "pending" && e.age > 30 ? e.age : null)}
     <h3 style="font-size:13px;margin-top:14px">History</h3><ul class="log">${e.audit.map(a => `<li><b>${esc(a.action)}</b> · ${esc(a.user)} · ${esc(a.at.replace("T", " "))}${a.detail ? `<br>${esc(a.detail)}` : ""}</li>`).join("")}</ul>`, btns.join(""), () => {
     const on = (id, fn) => $(id) && ($(id).onclick = fn);
-    on("#a-edit", () => editor(e)); on("#a-fu", () => followupForm(e));
+    on("#a-edit", () => editor(e)); on("#a-req", () => editor(e, true)); on("#a-fu", () => followupForm(e));
+    if (openReq) { $("#dlg").querySelector("[data-cr-ok]")?.addEventListener("click", () => crDecide(openReq, "approve")); $("#dlg").querySelector("[data-cr-no]")?.addEventListener("click", () => crDecide(openReq, "reject"));
+      on("#cr-wd", async () => { try { await api(`change-requests/${openReq.id}/withdraw`, { method: "POST", body: {} }); closeModal(); toast("Request withdrawn"); render(); } catch (er) { toast(er.message); } }); }
     if ($("#att")) $("#att").onchange = async ev => { const f = ev.target.files[0]; if (!f) return; try { await api(`estimates/${e.id}/files`, { method: "POST", body: { filename: f.name, content: await b64(f) } }); toast("Attached"); detail(e.id); } catch (er) { toast(er.message); } };
     on("#a-rec", () => payForm(e)); on("#a-app", () => reasonForm(e, "drop-decision", "Approve drop", { decision: "approve" }, e.drop_reason));
     on("#a-rej", () => reasonForm(e, "drop-decision", "Reject drop request", { decision: "reject" }, "", true));
@@ -324,13 +369,18 @@ async function submit(e, act, body) {
 
 /* ---------- finance desk ---------- */
 async function finance(el) {
-  const [drops, pend] = await Promise.all([api("estimates?drop_requested=1"), api("estimates?status=pending")]);
+  const [drops, pend, crs] = await Promise.all([api("estimates?drop_requested=1"), api("estimates?status=pending"), api("change-requests?status=open")]);
   el.innerHTML = `<div class="bar"><h2>Finance desk</h2></div>
+  <div class="card" style="margin-bottom:16px"><h3>Change requests from sales (${crs.length})</h3><div class="hint">Any finance person can approve (the change is applied immediately) or reject with a reason. Sales and finance are notified either way.</div>
+    ${crs.length ? `<div class="list">${crs.map(cr => `<div class="item" style="display:block"><div style="display:flex;gap:12px;justify-content:space-between"><div><b>${esc(cr.number)}</b> · <span title="${esc(cr.customer)}">${esc(cr.customer)}</span></div><button class="btn sm" data-open="${cr.estimate_id}">Open estimate</button></div>${crCard(cr)}</div>`).join("")}</div>` : `<div class="muted">Nothing waiting.</div>`}</div>
   <div class="card" style="margin-bottom:16px"><h3>Drop requests from sales (${drops.length})</h3><div class="hint">Open a request to approve it (writes the estimate off) or reject it (keeps it pending).</div>
     ${drops.length ? `<div class="list">${drops.map(r => `<div class="item click" tabindex="0" data-id="${r.id}"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span><div class="muted">“${esc(r.drop_reason)}” — ${esc(r.drop_requested_by)}, ${fdate(r.drop_requested_on)}</div></div><div class="num"><b>₹ ${inr(r.total)}</b></div></div>`).join("")}</div>` : `<div class="muted">Nothing waiting.</div>`}</div>
   <div class="card"><h3>Pending — oldest first (${pend.length})</h3><div class="hint">Open an estimate to record the payment and tax invoice. Showing the oldest 40.</div><div class="scroll"><table><thead><tr><th>Estimate</th><th>Customer</th><th>Sales manager</th><th class="r">Amount</th><th class="r">Age</th><th></th></tr></thead><tbody>
   ${pend.sort((a, b) => b.age - a.age).slice(0, 40).map(r => `<tr class="click" tabindex="0" data-id="${r.id}"><td>${esc(r.number)}</td><td class="clip" title="${esc(r.customer)}">${esc(r.customer)}</td><td>${teamHtml(r.team)}</td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}</td></tr>`).join("")}</tbody></table></div></div>`;
   activate(el, "[data-id]", x => detail(+x.dataset.id));
+  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
+  el.querySelectorAll("[data-cr-ok]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crOk), "approve"));
+  el.querySelectorAll("[data-cr-no]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crNo), "reject"));
 }
 
 /* ---------- published history ---------- */
@@ -354,6 +404,7 @@ async function rulesTab(el) {
    <li><b>Finance</b> records the payment and tax invoice (which converts the estimate), approves or rejects drop requests, may drop directly with a reason, and publishes the daily report.</li>
    <li><b>Admin</b> manages users and the sales-manager list, and is the only role that can reopen a closed estimate.</li></ul></div>
   <div class="card help"><h3>Rules the system enforces</h3><ul>
+   <li><b>Changing an estimate:</b> once saved, sales can't edit it directly. They use <i>Request change</i> (what to change + why). Everyone is notified, any finance person can approve (applied at once) or reject with a reason, and the requester can withdraw. If the estimate changed after the request was made, finance rejects it and sales ask again. Follow-ups, attachments and drop proposals don't need a request.</li>
    <li>Estimate numbers are unique. One estimate can carry several fee lines (one per fee type); status belongs to the whole estimate.</li>
    <li>Estimate date can't be in the future; payment can't be before the estimate or in the future; a tax invoice number is mandatory to mark received.</li>
    <li>Amounts must be positive. Sales can only raise/edit estimates they are a named sales manager on.</li>

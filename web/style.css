@@ -111,3 +111,23 @@ nav{overflow-x:auto;scrollbar-width:none}nav button{white-space:nowrap}
 .tl-n{margin-top:2px;overflow-wrap:anywhere}.tl-x{margin-top:2px;font-size:13px;color:var(--ink2)}
 .tl-empty{margin:10px 0 2px;padding:10px 12px;border-radius:8px;background:var(--bad-bg);color:var(--bad)}
 .fu-h{display:flex;gap:12px;align-items:flex-start}.fu-h .grow{flex:1;min-width:0}.fu-h .muted{font-size:13px}
+/* change requests + notifications */
+.pill.cr{background:var(--warn-bg);color:var(--warn)}
+.bell{position:relative;background:none;border:1px solid var(--line);border-radius:8px;width:36px;height:34px;display:grid;place-items:center;cursor:pointer;color:var(--ink2)}
+.bell:hover{border-color:var(--ink3);color:var(--ink)}
+.badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:9px;background:var(--bad);color:#fff;font-size:11px;font-weight:600;line-height:18px;text-align:center;padding:0 4px}
+.badge[hidden]{display:none}
+.banner{border:1px solid var(--warn);background:var(--warn-bg);border-radius:8px;padding:10px 12px;margin-bottom:14px}
+.banner.rej{border-color:var(--bad);background:var(--bad-bg);color:var(--bad)}
+.banner .cr{margin-top:6px}
+.cr{margin-top:8px}.cr-why{margin:4px 0 8px;overflow-wrap:anywhere}
+.cr-act{display:flex;gap:8px;margin-top:10px}
+table.diff{width:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table.diff th{width:150px;font-weight:500;color:var(--ink2);white-space:nowrap}
+table.diff td{white-space:normal;overflow-wrap:anywhere;max-width:240px}
+table.diff td.old{color:var(--bad)}table.diff td.new{color:var(--good);font-weight:600}table.diff td.arrow{color:var(--ink3);width:20px;padding:7px 2px}
+ul.notes{list-style:none;margin:0;padding:0}
+ul.notes li{padding:10px 8px 10px 14px;border-bottom:1px solid var(--line);position:relative}
+ul.notes li.unread{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+ul.notes li.unread:before{content:"";position:absolute;left:3px;top:17px;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+ul.notes .muted{font-size:12px}.n-act{margin-top:6px}

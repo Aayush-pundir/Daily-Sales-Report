@@ -144,6 +144,12 @@ class H(BaseHTTPRequestHandler):
             if m == "GET": return self.list_estimates(c, q)
             if m == "POST": return self.create(c, b, user)
         if P == ["followups"]: return self.followup_board(c, q)
+        if P == ["change-requests"] and m == "GET": return self.list_change_requests(c, q)
+        if P[0] == "change-requests" and len(P) == 3 and P[1].isdigit() and P[2] in ("decision", "withdraw") and m == "POST":
+            return self.change_decision(c, int(P[1]), P[2], b, user)
+        if P[0] == "estimates" and len(P) == 3 and P[1].isdigit() and P[2] == "change-requests" and m == "POST":
+            return self.request_change(c, int(P[1]), b, user)
+        if P[0] == "notifications": return self.notifications(c, m, P, q, user)
         if P[0] == "estimates" and len(P) == 3 and P[1].isdigit() and P[2] == "followups" and m == "POST":
             return self.add_followup(c, int(P[1]), b, user)
         if P[0] == "estimates" and len(P) >= 3 and P[1].isdigit() and P[2] == "files":
@@ -162,6 +168,7 @@ class H(BaseHTTPRequestHandler):
         as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
         r = rules.build_report(db.load_estimates(c), ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
+        r["open_change_requests"] = c.execute("SELECT COUNT(*) FROM change_requests WHERE status='open'").fetchone()[0]
         r["followups_needed"] = sum(1 for x in self.followup_board(c, {}) if x["flag"] != "ok")
         s = c.execute("SELECT day,published_by,at FROM snapshots ORDER BY day DESC LIMIT 1").fetchone()
         r["last_published"] = dict(s) if s else None
@@ -169,7 +176,10 @@ class H(BaseHTTPRequestHandler):
 
     def list_estimates(self, c, q):
         t = today(); out = []
+        with_cr = {r[0] for r in c.execute("SELECT estimate_id FROM change_requests WHERE status='open'")}
         for e in db.load_estimates(c):
+            e["change_requested"] = e["id"] in with_cr
+            if q.get("change_requested") == "1" and not e["change_requested"]: continue
             e["age"] = (t - date.fromisoformat(e["est_date"])).days if e["status"] == "pending" else None
             e["bucket"] = rules.bucket(e["age"]) if e["age"] is not None else None
             e["team"] = rules.team_label(e["owners"]); e["categories"] = [l["category"] for l in e["lines"]]
@@ -275,6 +285,7 @@ class H(BaseHTTPRequestHandler):
             if not r or not os.path.isfile(path): raise Err(404, "File not found.")
             return open(path, "rb").read(), r["mime"], [("Content-Disposition", 'attachment; filename="%s"' % re.sub(r'[^\w.\- ]', "_", r["name"]))]
         if m == "POST":
+            need(user, "sales", "finance")
             if user["role"] == "sales" and not is_owner(user, e): raise Err(403, "Only the estimate's sales manager can attach files.")
             name = os.path.basename(str(b.get("filename") or "")).strip()
             ext = os.path.splitext(name)[1].lower()
@@ -320,6 +331,7 @@ class H(BaseHTTPRequestHandler):
             e["audit"] = [dict(r) for r in c.execute("SELECT at,user,action,detail FROM audit WHERE estimate_id=? ORDER BY id DESC", (eid,))]
             e["age"] = (today() - date.fromisoformat(e["est_date"])).days if e["status"] == "pending" else None
             e["followups"] = self.followups_for(c, [eid])[eid]
+            e["change_requests"] = [self._cr_row(r) for r in c.execute("SELECT * FROM change_requests WHERE estimate_id=? ORDER BY id DESC", (eid,))]
             e["files"] = [dict(r) for r in c.execute("SELECT id,name,size,uploaded_by FROM files WHERE estimate_id=? ORDER BY id", (eid,))]
             return e
         if b.get("version") != e["version"]:
@@ -330,19 +342,15 @@ class H(BaseHTTPRequestHandler):
             c.execute("UPDATE estimates SET " + ",".join(f"{k}=?" for k in f) + " WHERE id=?", [*f.values(), eid])
         reason = (b.get("reason") or "").strip()
 
-        if act == "" and m == "PUT":                       # edit (sales owner/admin, pending only)
-            need(user, "sales")
+        if act == "" and m == "PUT":                       # direct edit: finance/admin only; sales request changes instead
+            if user["role"] == "sales": raise Err(403, "Changes to an estimate are requested from finance: use “Request change”.")
+            need(user, "finance")
             if e["status"] != "pending": raise Err(409, "Closed estimates can't be edited. Ask an admin to reopen it.")
-            if user["role"] == "sales" and not is_owner(user, e): raise Err(403, "Only the estimate's sales manager can edit it.")
-            clean, errs = rules.validate_estimate(b, self.sm_names(c), t, user["sm_name"] if user["role"] == "sales" else None)
+            clean, errs = rules.validate_estimate(b, self.sm_names(c), t, None)
             if not errs and clean["number"] != e["number"] and c.execute("SELECT 1 FROM estimates WHERE number=?", (clean["number"],)).fetchone():
                 errs.append(f'Estimate {clean["number"]} already exists.')
             if errs: raise Err(422, errs[0], {"errors": errs})
-            changes = [f'{k}: {e[k]} → {clean[k]}' for k in ("number", "est_date", "period", "customer", "owners", "notes") if e[k] != clean[k]]
-            if sorted((l["category"], l["amount"]) for l in e["lines"]) != sorted((l["category"], l["amount"]) for l in clean["lines"]):
-                changes.append(f'fees: {e["total"]:g} → {sum(l["amount"] for l in clean["lines"]):g}')
-            bump(number=clean["number"], est_date=clean["est_date"], period=clean["period"], customer=clean["customer"], owners=clean["owners"], notes=clean["notes"])
-            db.save_lines(c, eid, clean["lines"]); db.log(c, eid, who, "edited", "; ".join(changes) or "no change")
+            self._apply(c, e, clean, who, "edited", rules.describe_diff(rules.diff_estimate(e, clean)) or "no change")
         elif act == "receive":                              # finance records payment => converted to tax invoice
             need(user, "finance")
             if e["status"] != "pending": raise Err(409, "This estimate is already closed.")
@@ -382,6 +390,92 @@ class H(BaseHTTPRequestHandler):
               "reopen": "estimate.reopened", "": "estimate.updated", "drop-request": "estimate.drop_requested"}.get(act)
         if ev: self.emit(ev, eid, c)
         return {"ok": True, "version": e["version"] + 1}
+
+    def _apply(self, c, e, clean, who, action, detail):
+        c.execute("UPDATE estimates SET number=?,est_date=?,period=?,customer=?,owners=?,notes=?,version=?,updated_at=? WHERE id=?",
+                  (clean["number"], clean["est_date"], clean["period"], clean["customer"], clean["owners"], clean["notes"], e["version"] + 1, db.now(), e["id"]))
+        db.save_lines(c, e["id"], clean["lines"]); db.log(c, e["id"], who, action, detail)
+
+    # ---- change requests (sales ask, any finance person decides) + notifications
+    def _cr_row(self, r):
+        d = dict(r); d["changes"] = json.loads(d["changes"]); d["summary"] = rules.describe_diff(d["changes"]); return d
+
+    def request_change(self, c, eid, b, user):
+        if user["role"] != "sales": raise Err(403, "Finance and admin edit estimates directly; only sales request changes.")
+        rows = db.load_estimates(c, "WHERE id=?", (eid,))
+        if not rows: raise Err(404, "Estimate not found.")
+        e = rows[0]
+        if e["status"] != "pending": raise Err(409, "Closed estimates can't be changed. Ask finance/admin to reopen it.")
+        if user["role"] == "sales" and not is_owner(user, e): raise Err(403, "Only the estimate's sales manager can request a change.")
+        if c.execute("SELECT 1 FROM change_requests WHERE estimate_id=? AND status='open'", (eid,)).fetchone():
+            raise Err(409, "A change request is already waiting for finance on this estimate. Withdraw it first to send a new one.")
+        reason = (b.get("reason") or "").strip()
+        if len(reason) < 5: raise Err(422, "Tell finance why the change is needed (min 5 characters).")
+        proposal = {**rules.current_values(e), **{k: b[k] for k in rules.DIFF_FIELDS if k in b}}   # unspecified fields stay as they are
+        clean, errs = rules.validate_estimate(proposal, self.sm_names(c), today(), None)
+        if not errs and clean["number"] != e["number"] and c.execute("SELECT 1 FROM estimates WHERE number=?", (clean["number"],)).fetchone():
+            errs.append(f'Estimate {clean["number"]} already exists.')
+        if errs: raise Err(422, errs[0], {"errors": errs})
+        changes = rules.diff_estimate(e, clean)
+        if not changes: raise Err(422, "Nothing to change: the request matches the estimate as it is.")
+        cur = c.execute("INSERT INTO change_requests(estimate_id,requested_by,requested_at,reason,changes) VALUES(?,?,?,?,?)",
+                        (eid, user["name"], db.now(), reason, json.dumps(changes)))
+        summary = rules.describe_diff(changes)
+        db.log(c, eid, user["name"], "change requested", f"{summary} — {reason}")
+        db.notify(c, "change_requested", eid, cur.lastrowid, user["name"], f'{user["name"]} asked finance to change {e["number"]} ({e["customer"][:30]}): {summary}')
+        self.emit("estimate.change_requested", eid, c)
+        return {"id": cur.lastrowid}
+
+    def list_change_requests(self, c, q):
+        sql = "SELECT cr.*, e.number, e.customer, e.owners FROM change_requests cr JOIN estimates e ON e.id=cr.estimate_id"
+        args = []
+        if q.get("status"): sql += " WHERE cr.status=?"; args.append(q["status"])
+        if q.get("estimate_id", "").isdigit(): sql += (" AND" if args else " WHERE") + " cr.estimate_id=?"; args.append(int(q["estimate_id"]))
+        return [self._cr_row(r) for r in c.execute(sql + " ORDER BY cr.id DESC LIMIT 200", args)]
+
+    def change_decision(self, c, rid, act, b, user):
+        r = c.execute("SELECT * FROM change_requests WHERE id=?", (rid,)).fetchone()
+        if not r: raise Err(404, "Change request not found.")
+        if r["status"] != "open": raise Err(409, f'This request was already {r["status"]}' + (f' by {r["decided_by"]}.' if r["decided_by"] else "."))
+        e = db.load_estimates(c, "WHERE id=?", (r["estimate_id"],))[0]
+        note = (b.get("note") or "").strip(); who = user["name"]
+        if act == "withdraw":
+            if user["role"] != "admin" and who != r["requested_by"]: raise Err(403, "Only the person who asked can withdraw it.")
+            status, kind, word = "withdrawn", "change_withdrawn", "withdrew the change request for"
+        else:
+            need(user, "finance")                                  # any finance person (or admin) can decide
+            if b.get("decision") == "reject":
+                if len(note) < 5: raise Err(422, "Say why it is rejected (min 5 characters) so sales know what to fix.")
+                status, kind, word = "rejected", "change_rejected", "rejected the change to"
+            elif b.get("decision") == "approve":
+                if e["status"] != "pending": raise Err(409, "The estimate is closed now; reject this request.")
+                changes = json.loads(r["changes"]); cur = rules.current_values(e)
+                stale = [f for f, ch in changes.items() if rules._norm(f, cur[f]) != ch["old"]]
+                if stale: raise Err(409, "The estimate changed after this was requested (" + ", ".join(stale) + "). Reject it and ask sales to send it again.")
+                prop = {**cur, **{f: ch["new"] if f != "lines" else [{"category": c_, "amount": a_} for c_, a_ in ch["new"]] for f, ch in changes.items()}}
+                clean, errs = rules.validate_estimate(prop, self.sm_names(c), today(), None)
+                if not errs and clean["number"] != e["number"] and c.execute("SELECT 1 FROM estimates WHERE number=?", (clean["number"],)).fetchone():
+                    errs.append(f'Estimate {clean["number"]} already exists.')
+                if errs: raise Err(422, errs[0], {"errors": errs})
+                self._apply(c, e, clean, who, "edited", f'approved request #{rid} by {r["requested_by"]}: ' + rules.describe_diff(changes))
+                status, kind, word = "approved", "change_approved", "approved the change to"
+            else: raise Err(400, "decision must be approve or reject")
+        c.execute("UPDATE change_requests SET status=?,decided_by=?,decided_at=?,decision_note=? WHERE id=?", (status, who, db.now(), note, rid))
+        if status != "approved": db.log(c, e["id"], who, f"change request {status}", note)
+        db.notify(c, kind, e["id"], rid, who, f'{who} {word} {e["number"]} ({e["customer"][:30]})' + (f': {note}' if note else "") + (f' — {rules.describe_diff(json.loads(r["changes"]))}' if status == "approved" else "") + (f' (requested by {r["requested_by"]})' if status != "withdrawn" else ""))
+        self.emit({"approved": "estimate.change_approved", "rejected": "estimate.change_rejected", "withdrawn": "estimate.change_withdrawn"}[status], e["id"], c)
+        return {"ok": True, "status": status}
+
+    def notifications(self, c, m, P, q, user):
+        key = str(user["id"])
+        if m == "POST" and P[1:] == ["read"]:
+            top = c.execute("SELECT COALESCE(MAX(id),0) FROM notifications").fetchone()[0]
+            c.execute("INSERT INTO notif_reads(user_key,last_id) VALUES(?,?) ON CONFLICT(user_key) DO UPDATE SET last_id=excluded.last_id", (key, top)); return {"ok": True}
+        last = (c.execute("SELECT last_id FROM notif_reads WHERE user_key=?", (key,)).fetchone() or [0])[0]
+        rows = [dict(r) for r in c.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT ?", (min(int(q.get("limit") or 30), 100),))]
+        open_ids = {r[0] for r in c.execute("SELECT id FROM change_requests WHERE status='open'")}
+        for r in rows: r["unread"] = r["id"] > last; r["open"] = r["request_id"] in open_ids and r["kind"] == "change_requested"
+        return {"unread": c.execute("SELECT COUNT(*) FROM notifications WHERE id>?", (last,)).fetchone()[0], "items": rows}
 
     # ---- admin
     def admin(self, c, m, P, b, user):

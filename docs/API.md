@@ -24,12 +24,30 @@ curl -X POST $BASE/api/estimates -H "Authorization: Bearer $KEY" -H "Content-Typ
 ```
 Categories: `Annual fees`, `Set-up fees`, `Integration`, `Customisation`.
 
+## Changing an estimate after it is saved
+Sales keys cannot edit an estimate directly (that returns 403). They ask finance:
+```bash
+curl -X POST $BASE/api/estimates/131/change-requests -H "Authorization: Bearer $SALES_KEY" -H "Content-Type: application/json" -d '{
+  "reason": "Revised PDF shows ₹2,60,000",                         # required, min 5 characters
+  "lines": [{"category": "Annual fees", "amount": 260000}]      # send only what changes; other fields stay as they are
+}'
+# 200 {"id": 7}  | 409 if a request is already open on that estimate | 422 if nothing would change
+```
+A finance key (or an admin) decides, which applies the change immediately:
+```bash
+curl -X POST $BASE/api/change-requests/7/decision -H "Authorization: Bearer $FINANCE_KEY" -H "Content-Type: application/json" -d '{"decision": "approve"}'
+# or {"decision": "reject", "note": "Must match the GST registration"}   # note required for a rejection
+curl -X POST $BASE/api/change-requests/7/withdraw ...                  # by whoever asked
+```
+`GET /api/change-requests?status=open` lists them with the field-by-field changes. A request goes stale (409 on approve) if the estimate was changed after it was raised.
+Finance and admin keys can still `PUT /api/estimates/{id}` directly. `GET /api/notifications` returns the shared notification feed.
+
 ## Other calls
 | | |
 |---|---|
 | `GET /api/estimates?status=pending&sm=Arshdeep&category=…&bucket=90%2B&q=text` | list (adds `age`, `bucket`, `team`) |
 | `GET /api/estimates/{id}` | detail with `lines`, `audit`, `files`, `version` |
-| `PUT /api/estimates/{id}` | edit a pending estimate; body as create **plus `"version"`** |
+| `PUT /api/estimates/{id}` | **finance/admin only**: edit a pending estimate; body as create **plus `"version"`** (sales use change requests) |
 | `POST /api/estimates/{id}/receive` | finance: `{version, invoice_no, invoice_date, received_on, payment_ref}` |
 | `POST /api/estimates/{id}/drop-request` | `{version, reason}` |
 | `POST /api/estimates/{id}/drop-decision` | finance: `{version, decision: "approve"\|"reject", reason}` |
@@ -43,7 +61,7 @@ Categories: `Annual fees`, `Set-up fees`, `Integration`, `Customisation`.
 `version` is optimistic locking: a stale value returns **409**; re-read and retry.
 
 ## Webhook
-Admin sets a URL and secret. Events: `estimate.created`, `estimate.updated`, `estimate.drop_requested`, `estimate.followup`, `estimate.received`, `estimate.dropped`, `estimate.reopened`.
+Admin sets a URL and secret. Events: `estimate.created`, `estimate.updated`, `estimate.drop_requested`, `estimate.followup`, `estimate.change_requested`, `estimate.change_approved`, `estimate.change_rejected`, `estimate.change_withdrawn`, `estimate.received`, `estimate.dropped`, `estimate.reopened`.
 ```json
 {"event": "estimate.received", "at": "2026-10-13T15:02:11",
  "estimate": {"id": 131, "number": "EST-26-27/264", "status": "received", "external_ref": "CRM-DEAL-1042", "total": 100000, "closed_on": "2026-10-13", "invoice_no": "INV-1", "owners": "Arshdeep|Meisheil", "lines": [...]}}

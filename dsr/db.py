@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS followups(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
   on_date TEXT NOT NULL, kind TEXT NOT NULL, contact TEXT, note TEXT NOT NULL, next_date TEXT, by_user TEXT, created_at TEXT);
 CREATE INDEX IF NOT EXISTS ix_fu_est ON followups(estimate_id);
+CREATE TABLE IF NOT EXISTS change_requests(id INTEGER PRIMARY KEY, estimate_id INTEGER NOT NULL REFERENCES estimates(id) ON DELETE CASCADE,
+  requested_by TEXT, requested_at TEXT, reason TEXT, changes TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+  decided_by TEXT, decided_at TEXT, decision_note TEXT);
+CREATE INDEX IF NOT EXISTS ix_cr_est ON change_requests(estimate_id, status);
+CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY, at TEXT, kind TEXT, estimate_id INTEGER, request_id INTEGER, actor TEXT, text TEXT);
+CREATE TABLE IF NOT EXISTS notif_reads(user_key TEXT PRIMARY KEY, last_id INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS ix_lines_est ON lines(estimate_id);
 CREATE INDEX IF NOT EXISTS ix_audit_est ON audit(estimate_id);
 """
@@ -64,6 +70,10 @@ def now():
 
 def log(c, est_id, user, action, detail=""):
     c.execute("INSERT INTO audit(estimate_id,at,user,action,detail) VALUES(?,?,?,?,?)", (est_id, now(), user, action, detail))
+
+
+def notify(c, kind, est_id, req_id, actor, text):
+    c.execute("INSERT INTO notifications(at,kind,estimate_id,request_id,actor,text) VALUES(?,?,?,?,?,?)", (now(), kind, est_id, req_id, actor, text))
 
 
 def load_estimates(c, where="", args=()):

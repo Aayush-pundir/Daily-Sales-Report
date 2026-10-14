@@ -64,6 +64,27 @@ class Followups(unittest.TestCase):
         c, errs = rules.validate_followup({"on_date": "2026-10-12", "kind": "Call", "note": "Spoke to AP team", "next_date": "2026-10-20"}, "2026-08-01", self.T)
         self.assertEqual((errs, c["next_date"]), ([], "2026-10-20"))
 
+class ChangeDiff(unittest.TestCase):
+    E = {"number": "EST-1", "est_date": "2026-10-01", "period": "2026-10", "customer": "Acme", "owners": "A|B", "notes": "",
+         "lines": [{"category": "Annual fees", "amount": 250000.0}]}
+
+    def clean(self, **kw):
+        c = {"number": "EST-1", "est_date": "2026-10-01", "period": "2026-10", "customer": "Acme", "owners": "A|B", "notes": "",
+             "lines": [{"category": "Annual fees", "amount": 250000.0}]}
+        c.update(kw); return c
+
+    def test_no_change(self):
+        self.assertEqual(rules.diff_estimate(self.E, self.clean()), {})
+
+    def test_diff_and_text(self):
+        d = rules.diff_estimate(self.E, self.clean(owners="B|A", lines=[{"category": "Annual fees", "amount": 260000.0}]))
+        self.assertEqual(set(d), {"owners", "lines"})                      # order of owners matters: the first is the primary
+
+        self.assertIn("₹2,50,000 → ₹2,60,000", rules.describe_diff(d))
+
+    def test_indian_grouping(self):
+        self.assertEqual([rules.inr(n) for n in (999, 1000, 100000, 12345678)], ["999", "1,000", "1,00,000", "1,23,45,678"])
+
 class Validation(unittest.TestCase):
     def test_rules(self):
         _, errs = rules.validate_estimate({"number": " EST 1 ", "est_date": "2999-01-01", "customer": "", "owners": ["Zed"],
