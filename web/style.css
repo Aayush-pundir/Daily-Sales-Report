@@ -96,9 +96,7 @@ tr.click{cursor:pointer}tr.click:focus-visible,.item:focus-visible{outline:2px s
 .item .muted{font-size:13px}
 .legend span{white-space:nowrap}
 .card{min-width:0}
-.hint{max-width:70ch}
 nav{overflow-x:auto;scrollbar-width:none}nav button{white-space:nowrap}
-.bar .sub{max-width:60ch}
 
 /* follow-up timeline */
 .tl{list-style:none;margin:10px 0 2px;padding:0 0 0 18px;position:relative}
