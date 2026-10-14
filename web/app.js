@@ -13,7 +13,9 @@ const AGE_COLOR = ["var(--a0)", "var(--a1)", "var(--a2)", "var(--a3)"];
 const S = { unread: 0, me: null, meta: null, tab: "dashboard", month: null, credit: "team", filters: { status: "pending" } };
 
 async function api(path, opt = {}) {
-  const r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined });
+  let r;
+  try { r = await fetch("/api/" + path, { method: opt.method || "GET", headers: opt.body ? { "Content-Type": "application/json" } : {}, body: opt.body ? JSON.stringify(opt.body) : undefined }); }
+  catch { throw new Error("Can't reach the app. Check that the Terminal window running “python3 -m dsr” is still open (if not, start it again), then refresh this page."); }
   if (r.status === 401 && path !== "login" && path !== "quick-login") { S.me = null; render(); throw new Error("Please sign in."); }
   const ct = r.headers.get("Content-Type") || "";
   const data = ct.includes("json") ? await r.json() : await r.text();

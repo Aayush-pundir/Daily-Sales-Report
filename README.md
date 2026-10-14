@@ -561,6 +561,9 @@ Check the estimate's **Report month**. The app counts an estimate in its report 
 **"The follow-up board says 'No follow-up yet' but I called them."**
 Calls only count once they are **logged**. Open the estimate (or the board card) → **Log follow-up**.
 
+**"Failed to fetch" / "Can't reach the app".**
+The page is open but the app behind it is no longer running or has stopped answering. Look at the **Terminal window** where you ran `python3 -m dsr`: if it has returned to a prompt (or shows an error), start it again with `python3 -m dsr` and refresh the page. If the window shows a red "Traceback", copy those lines — they say exactly what went wrong. Also try opening **http://127.0.0.1:8080** (instead of `localhost`).
+
 **"I can't sign in / the page keeps asking me to sign in."**
 Sessions last 7 days. If the server was restarted with a different database file, the old sign-in is gone — sign in again. If you expected to just click a name but see a password form, the server is open to the network (`HOST=0.0.0.0`) so quick sign-in is off; use the admin password printed at first run, or start it with `DSR_PASSWORDLESS=1` if you really want it.
 

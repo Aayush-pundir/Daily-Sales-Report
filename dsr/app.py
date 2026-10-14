@@ -5,7 +5,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-import base64, hashlib, hmac, urllib.request
+import base64, hashlib, hmac, traceback, urllib.request
 import mimetypes
 from . import db, rules, uploads
 
@@ -122,6 +122,9 @@ class H(BaseHTTPRequestHandler):
                 finally: c.close()
             if getattr(self, "_events", None): self.fire_webhooks()
         except Err as e: return self.send(e.code, {"error": e.msg, **e.extra})
+        except Exception:                      # never drop the connection: that shows up in the browser as "Failed to fetch"
+            traceback.print_exc()
+            return self.send(500, {"error": "Something went wrong inside the app. The technical details are printed in the Terminal window where the app is running."})
         if isinstance(res, tuple): return self.send(200, res[0], res[1], res[2] if len(res) > 2 else ())
         self.send(200, res)
 
@@ -191,7 +194,8 @@ class H(BaseHTTPRequestHandler):
     def report(self, c, q):
         ym = q.get("month") or today().strftime("%Y-%m")
         if not re.fullmatch(r"\d{4}-\d{2}", ym): raise Err(400, "month must be YYYY-MM")
-        as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
+        try: as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
+        except ValueError: raise Err(400, "as_on must be YYYY-MM-DD")
         r = rules.build_report(db.load_estimates(c), ym, as_on, credit=q.get("credit") if q.get("credit") in ("primary", "split") else "team")
         r["pending_drop_requests"] = c.execute("SELECT COUNT(*) FROM estimates WHERE status='pending' AND drop_requested_by IS NOT NULL").fetchone()[0]
         r["open_change_requests"] = c.execute("SELECT COUNT(*) FROM change_requests WHERE status='open'").fetchone()[0]
@@ -579,7 +583,7 @@ def bootstrap():
 def main():
     bootstrap()
     port = int(os.environ.get("PORT", 8080))
-    print(f"Daily Sales Report on http://localhost:{port}")
+    print(f"Daily Sales Report is running.  Open  http://127.0.0.1:{port}  in your browser  (leave this window open; Ctrl+C stops it)")
     print("Sign-in: " + ("QUICK (click a name, no password) — only because this server is reachable from this computer alone" if passwordless() else "password"))
     ThreadingHTTPServer((os.environ.get("HOST", "127.0.0.1"), port), H).serve_forever()
 
