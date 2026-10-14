@@ -292,7 +292,7 @@ The bar chart counts estimates by the month **payment was received**. It starts 
 
 | Parameter | Value |
 |---|---|
-| Password | at least 8 characters, stored hashed (scrypt) |
+| Password | at least 8 characters, stored hashed (PBKDF2-HMAC-SHA256, 600,000 rounds) |
 | Username | 3–30 characters: letters, digits, `.` `_` `-` |
 | Sign-in lasts | 7 days (then sign in again) |
 | Attachment / upload size | 10 MB |
@@ -353,7 +353,7 @@ Good to know:
 ## 11. Architecture (how it is built)
 
 ### In one paragraph
-A tiny web server written with **only Python's standard library** stores everything in a single **SQLite** file and serves a plain **HTML/JavaScript** page. There is nothing to install except Python 3.10 or newer. All business rules live in one small, testable module (`dsr/rules.py`); the server (`dsr/app.py`) checks who is allowed to do what, and the page (`web/app.js`) only displays and collects input.
+A tiny web server written with **only Python's standard library** stores everything in a single **SQLite** file and serves a plain **HTML/JavaScript** page. There is nothing to install except Python 3.9 or newer (the Python that comes with a Mac is fine). All business rules live in one small, testable module (`dsr/rules.py`); the server (`dsr/app.py`) checks who is allowed to do what, and the page (`web/app.js`) only displays and collects input.
 
 ### The big picture
 
@@ -443,7 +443,7 @@ erDiagram
 | **Everything visible, actions restricted** | Matches how the team already shares the daily report. |
 
 ### Security in brief
-- Passwords are **hashed** (scrypt), never stored as typed. Sign-in uses an HTTP-only, same-site cookie.
+- Passwords are **hashed** (PBKDF2-SHA256), never stored as typed. Sign-in uses an HTTP-only, same-site cookie.
 - **Quick sign-in** (click a name, no password) exists for trying the app on your own computer. It is **automatically disabled** when the server is opened to the network, unless you force it with `DSR_PASSWORDLESS=1`.
 - API keys are shown **once**; only a hash is stored; keys can be revoked.
 - Every action is permission-checked **on the server** (hiding a button is never the only protection).
@@ -476,7 +476,9 @@ data/                created at run time: the database and uploaded files (not i
 ## 12. Installing, running and looking after it
 
 ### Requirements
-Python **3.10 or newer**. Nothing else. (Optional: `pip install openpyxl` to read Excel files for bulk upload and for the one-time import.)
+Python **3.9 or newer** (a Mac's built-in `python3` works). Nothing else. (Optional: `pip3 install openpyxl` to read Excel files for bulk upload and for the one-time import.)
+
+**Tip for the import command:** you don't have to type the file's path. Type `python3 -m dsr.import_xlsx ` (with a space at the end) and then **drag the Excel file from Finder into the Terminal window** — it fills in the path for you. Then add `--as-of 2026-10-13` (the date of the report).
 
 ### Start it
 ```bash

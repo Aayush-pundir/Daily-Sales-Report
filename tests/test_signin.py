@@ -25,3 +25,27 @@ class QuickSignInRule(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class PasswordHashing(unittest.TestCase):
+    def test_roundtrip_and_wrong_password(self):
+        from dsr import db
+        h = db.hash_pw("correct horse")
+        self.assertTrue(db.check_pw("correct horse", h)); self.assertFalse(db.check_pw("wrong", h))
+
+    def test_works_without_scrypt(self):
+        """macOS's system Python 3.9 has no hashlib.scrypt."""
+        import hashlib
+        from dsr import db
+        with mock.patch.object(hashlib, "scrypt", create=True, side_effect=AttributeError("no scrypt")):
+            del hashlib.scrypt
+            h = db.hash_pw("pw-12345")
+            self.assertTrue(db.check_pw("pw-12345", h))
+
+    def test_old_scrypt_hashes_still_verify(self):
+        import hashlib
+        from dsr import db
+        if not hasattr(hashlib, "scrypt"): self.skipTest("this Python has no scrypt")
+        salt = b"0123456789abcdef"
+        old = salt.hex() + "$" + hashlib.scrypt(b"legacy-pw", salt=salt, n=2 ** 14, r=8, p=1).hex()
+        self.assertTrue(db.check_pw("legacy-pw", old))

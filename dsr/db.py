@@ -55,15 +55,26 @@ def connect(path=None):
     return c
 
 
+PBKDF2_ROUNDS = 600_000
+
+
 def hash_pw(pw, salt=None):
+    """PBKDF2-HMAC-SHA256: available in every Python build (macOS's system Python has no hashlib.scrypt)."""
     salt = salt or secrets.token_bytes(16)
-    h = hashlib.scrypt(pw.encode(), salt=salt, n=2 ** 14, r=8, p=1)
-    return salt.hex() + "$" + h.hex()
+    h = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, PBKDF2_ROUNDS)
+    return f"pbkdf2${PBKDF2_ROUNDS}${salt.hex()}${h.hex()}"
 
 
 def check_pw(pw, stored):
-    salt, h = stored.split("$")
-    return secrets.compare_digest(hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=2 ** 14, r=8, p=1).hex(), h)
+    parts = stored.split("$")
+    if parts[0] == "pbkdf2":
+        _, rounds, salt, h = parts
+        calc = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), int(rounds)).hex()
+    else:                                   # older databases: "salt$hash" made with scrypt
+        if not hasattr(hashlib, "scrypt"): return False
+        salt, h = parts
+        calc = hashlib.scrypt(pw.encode(), salt=bytes.fromhex(salt), n=2 ** 14, r=8, p=1).hex()
+    return secrets.compare_digest(calc, h)
 
 
 def now():
