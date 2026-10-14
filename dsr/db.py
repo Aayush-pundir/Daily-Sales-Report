@@ -40,7 +40,9 @@ FILES_DIR = os.path.join(os.path.dirname(DB_PATH), "files")
 
 
 def connect(path=None):
-    c = sqlite3.connect(path or DB_PATH, timeout=10)
+    path = os.path.abspath(path or DB_PATH)
+    os.makedirs(os.path.dirname(path), exist_ok=True)      # a fresh clone has no data/ folder yet
+    c = sqlite3.connect(path, timeout=10)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     c.executescript(SCHEMA)
