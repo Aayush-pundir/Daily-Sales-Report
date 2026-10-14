@@ -200,9 +200,10 @@ def credit_keys(e, credit):
 METRICS = ("opening", "new", "converted", "dropped", "closing")
 
 
-def drill(estimates, month, as_on, credit, key, metric, age_bucket=None):
+def drill(estimates, month, as_on, credit, key, metric, age_bucket=None, category=None):
     """The estimates behind one number on the dashboard (same rules as build_report, so the list always adds up to it).
-    key=None means all sales managers; age_bucket narrows 'closing' to one ageing column."""
+    key=None means all sales managers; age_bucket narrows 'closing' to one ageing column; category narrows to one fee
+    type (then `counted` is just that fee type's lines, as in the fee-type tables)."""
     start, mend = month_bounds(month)
     end = min(mend, as_on)
     out = []
@@ -214,10 +215,14 @@ def drill(estimates, month, as_on, credit, key, metric, age_bucket=None):
         b = bucket(age)
         if age_bucket and (metric != "closing" or b != age_bucket): continue
         total = sum(l["amount"] for l in e["lines"])
+        part = total
+        if category:
+            part = sum(l["amount"] for l in e["lines"] if l["category"] == category)
+            if not part: continue
         if not key: w = 1          # across everyone, a split estimate counts in full (its shares add back up to 100%)
         out.append({"id": e["id"], "number": e["number"], "customer": e["customer"], "owners": e["owners"], "team": team_label(e["owners"]),
                     "est_date": e["est_date"], "period": e["period"], "status": e["status"], "closed_on": e["closed_on"], "invoice_no": e.get("invoice_no"),
-                    "categories": [l["category"] for l in e["lines"]], "total": total, "counted": total * w, "share": w, "age": age, "bucket": b})
+                    "categories": [l["category"] for l in e["lines"]], "total": total, "part": part, "counted": part * w, "share": w, "age": age, "bucket": b})
     out.sort(key=lambda r: (-r["counted"], r["number"]))
     return out
 
@@ -252,7 +257,7 @@ def build_report(estimates, month, as_on, credit="team"):
             for k in keys:
                 for target in (teams[k], total): target["ageing"][b] += amount * w
             for l in e["lines"]: ageing_seg[b][l["category"]] += l["amount"]
-            top_pending.append({"number": e["number"], "customer": e["customer"], "owners": e["owners"],
+            top_pending.append({"id": e.get("id"), "number": e["number"], "customer": e["customer"], "owners": e["owners"],
                                 "amount": amount, "age": (end - ed).days, "bucket": b})
     top_pending.sort(key=lambda r: -r["age"] * 0 - r["amount"])
     # Conversions per month (count + value): from the first month with a conversion up to the selected month, max 7.

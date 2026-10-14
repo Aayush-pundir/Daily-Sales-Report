@@ -161,3 +161,6 @@ dialog.wide{width:min(1080px,calc(100vw - 48px))}
 .drill-sum{display:flex;gap:6px 16px;flex-wrap:wrap;align-items:baseline;margin-bottom:12px}
 .drill-sum .ok{color:var(--good);font-size:13px}.drill-sum .bad{color:var(--bad);font-size:13px;font-weight:600}
 dialog tfoot tr.total td{font-weight:650;border-top:2px solid var(--ink3);border-bottom:0}
+/* clickable chart marks */
+svg .hit{cursor:pointer}svg rect.hit:hover,svg g.hit:hover{filter:brightness(1.12)}svg text.hit:hover{text-decoration:underline}
+svg .hit:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

@@ -71,6 +71,26 @@ class DrillMatchesReport(unittest.TestCase):
                         got = rules.drill(E, month, as_on, credit, key, "closing", b)
                         self.assertAlmostEqual(sum(r["counted"] for r in got), cell["ageing"][b], msg=f"age {credit} {key} {b}")
 
+class DrillByFeeType(unittest.TestCase):
+    def test_fee_type_tables_match(self):
+        E = DrillMatchesReport().data()
+        for month, as_on in (("2026-10", date(2026, 10, 13)), ("2026-09", date(2026, 10, 13))):
+            for credit in ("team", "primary", "split"):
+                rep = rules.build_report(E, month, as_on, credit)
+                for m in rules.METRICS:
+                    for cat in rules.CATEGORIES:
+                        got = sum(r["counted"] for r in rules.drill(E, month, as_on, credit, None, m, None, cat))
+                        self.assertAlmostEqual(got, rep["segments"][m][cat], msg=f"{credit} {month} {m} {cat}")
+                for b in rules.BUCKETS:
+                    for cat in rules.CATEGORIES:
+                        got = sum(r["counted"] for r in rules.drill(E, month, as_on, credit, None, "closing", b, cat))
+                        self.assertAlmostEqual(got, rep["ageing_segments"][b][cat], msg=f"age {credit} {month} {b} {cat}")
+
+    def test_pending_rows_carry_an_id(self):
+        E = DrillMatchesReport().data()
+        top = rules.build_report(E, "2026-10", date(2026, 10, 13))["pending_by_value"]
+        self.assertTrue(top and all("id" in r for r in top))
+
 class Followups(unittest.TestCase):
     T = date(2026, 10, 13)
     def fu(self, on, nxt=None, i=1): return {"id": i, "on_date": on, "next_date": nxt}

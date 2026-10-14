@@ -149,19 +149,22 @@ async function dashboard(el) {
     <div class="card"><h3>Ageing of closing estimates</h3><div class="hint">Value still pending, by days since estimate date and fee type.</div><div id="ageing"></div></div>
   </div>
   <div class="grid g2">
-    <div class="card"><h3>Revenue segment report</h3><div class="hint">Same roll-forward, by fee type.</div><div class="scroll"><table class="compact"><thead><tr><th></th>${S.meta.categories.map(c => `<th class="r"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${CAT_COLOR[c]}"></i>${c}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
-      ${[["Opening", "opening"], ["+ New", "new"], ["− Converted", "converted"], ["− Dropped", "dropped"], ["Closing", "closing"]].map(([l, k]) => `<tr class="${k === "closing" ? "total" : ""}"><td>${l}</td>${S.meta.categories.map(c => `<td class="r num">${inr(r.segments[k][c])}</td>`).join("")}<td class="r num">${inr(Object.values(r.segments[k]).reduce((a, b) => a + b, 0))}</td></tr>`).join("")}</tbody></table></div></div>
-    <div class="card"><h3>Largest pending estimates</h3><div class="hint">Top 10 by value.</div><div class="scroll"><table><thead><tr><th>Customer</th><th>SM</th><th class="r">Age</th><th class="r">Amount</th></tr></thead><tbody>
-      ${r.pending_by_value.map(p => `<tr><td class="clip" title="${esc(p.customer)}">${esc(p.customer)}</td><td>${teamHtml(p.owners.replace(/\|/g, " & "))}</td><td class="r num">${p.age}d</td><td class="r num">${inr(p.amount)}</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="card"><h3>Revenue segment report</h3><div class="hint">Same roll-forward, by fee type. Click a number to list the estimates behind it.</div><div class="scroll"><table class="compact"><thead><tr><th></th>${S.meta.categories.map(c => `<th class="r"><i style="display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;background:${CAT_COLOR[c]}"></i>${c}</th>`).join("")}<th class="r">Total</th></tr></thead><tbody>
+      ${[["Opening", "opening"], ["+ New", "new"], ["− Converted", "converted"], ["− Dropped", "dropped"], ["Closing", "closing"]].map(([l, k]) => `<tr class="${k === "closing" ? "total" : ""}"><td>${l}</td>${S.meta.categories.map(c => `<td class="r num">${dvc(r.segments[k][c], k, c)}</td>`).join("")}<td class="r num">${dvc(Object.values(r.segments[k]).reduce((a, b) => a + b, 0), k, "")}</td></tr>`).join("")}</tbody></table></div></div>
+    <div class="card"><h3>Largest pending estimates</h3><div class="hint">Top 10 by value. Click one to open it.</div><div class="scroll"><table><thead><tr><th>Customer</th><th>SM</th><th class="r">Age</th><th class="r">Amount</th></tr></thead><tbody>
+      ${r.pending_by_value.map(p => `<tr class="click" tabindex="0" data-id="${p.id}" title="Open this estimate"><td class="clip" title="${esc(p.customer)}">${esc(p.customer)}</td><td>${teamHtml(p.owners.replace(/\|/g, " & "))}</td><td class="r num">${p.age}d</td><td class="r num">${inr(p.amount)}</td></tr>`).join("")}</tbody></table></div></div>
   </div>`;
   S.report = r; drawCharts();
+  activate(el, "tr[data-id]", tr => detail(+tr.dataset.id));
   $("#mon").onchange = e => { S.month = e.target.value; render(); };
   $("#split").onchange = e => { S.credit = e.target.value; render(); };
   if ($("#pub")) $("#pub").onclick = async () => { try { await api("snapshots", { method: "POST", body: {} }); toast("Report published"); render(); } catch (e) { toast(e.message); } };
   if ($("#goCr")) $("#goCr").onclick = () => { if (can("finance")) S.tab = "finance"; else { S.filters = { status: "pending", change_requested: "1" }; S.tab = "estimates"; } render(); };
   if ($("#goFu")) $("#goFu").onclick = () => { S.fu = { flag: "", sm: "", age: "30" }; S.tab = "followups"; render(); };
   if ($("#goDrops")) $("#goDrops").onclick = () => { S.tab = "finance"; render(); };
-  el.querySelectorAll("[data-metric]").forEach(b => b.onclick = () => drillDown({ metric: b.dataset.metric, team: b.dataset.team, who: b.dataset.who, bucket: b.dataset.bucket, v: b.dataset.v }).catch(e => toast(e.message)));
+  const go = b => drillDown({ metric: b.dataset.metric, team: b.dataset.team, who: b.dataset.who, bucket: b.dataset.bucket, cat: b.dataset.cat, month: b.dataset.month, v: b.dataset.v }).catch(e => toast(e.message));
+  el.addEventListener("click", ev => { const b = ev.target.closest("[data-metric]"); if (b && el.contains(b)) go(b); });
+  el.addEventListener("keydown", ev => { const b = ev.target.closest("[data-metric]"); if (b && b.tagName !== "BUTTON" && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); go(b); } });
   el.querySelectorAll("[data-pending]").forEach(b => b.onclick = () => {      // the name: that row's own pending estimates
     const name = b.dataset.pending, mode = S.credit;
     S.filters = { status: "pending", ...(mode === "team" ? { team: name.split(" & ").join("|") } : mode === "primary" ? { primary: name } : { sm: name }) };
@@ -170,20 +173,21 @@ async function dashboard(el) {
 }
 const keyOf = label => S.credit === "team" ? label.split(" & ").join("|") : label;          // how the server identifies a row
 const dv = (v, metric, team, bucket) => v ? `<button class="drill" data-metric="${metric}" data-team="${esc(team ? keyOf(team) : "")}" data-who="${esc(team || "")}"${bucket ? ` data-bucket="${bucket}"` : ""} data-v="${Math.round(v)}" title="Show these estimates">${inr(v)}</button>` : inr(v);
+const dvc = (v, metric, cat) => v ? `<button class="drill" data-metric="${metric}" data-team="" data-who="" ${cat ? `data-cat="${esc(cat)}" ` : ""}data-v="${Math.round(v)}" title="Show these estimates">${inr(v)}</button>` : inr(v);
 const METRIC_LABEL = { opening: "Opening — pending on the 1st", new: "New this month", converted: "Converted (paid) this month", dropped: "Dropped this month", closing: "Closing — pending now" };
 async function drillDown(d) {
-  const qs = new URLSearchParams({ month: S.month, credit: S.credit, metric: d.metric, ...(d.team ? { team: d.team } : {}), ...(d.bucket ? { bucket: d.bucket } : {}) });
-  const r = await api("report/drill?" + qs), who = d.who || "All sales managers";
+  const qs = new URLSearchParams({ month: d.month || S.month, credit: S.credit, metric: d.metric, ...(d.team ? { team: d.team } : {}), ...(d.bucket ? { bucket: d.bucket } : {}), ...(d.cat ? { category: d.cat } : {}) });
+  const r = await api("report/drill?" + qs), who = (d.who || "All sales managers") + (d.cat ? " · " + d.cat : "");
   const label = d.bucket ? `Pending ${d.bucket.replace("-", "–")} days` : METRIC_LABEL[d.metric];
   const note = x => d.metric === "converted" ? `Paid ${fdate(x.closed_on)}${x.invoice_no && x.invoice_no !== "(legacy)" ? " · " + esc(x.invoice_no) : ""}` : d.metric === "dropped" ? `Dropped ${fdate(x.closed_on)}` : d.metric === "new" ? `Raised ${fdate(x.est_date)}` : `${x.age} days old`;
   const split = S.credit === "split" && d.team;
   const match = d.v === undefined || Math.round(r.counted) === +d.v;
-  modal(`${esc(who)} — ${label}`, `<div class="drill-sum"><b class="num">${r.count} estimate${r.count === 1 ? "" : "s"} · ₹ ${inr(r.counted)}</b> <span class="muted">${fmonth(S.month)}, as on ${fdate(r.as_on)}${split ? " · each joint estimate shows this person's equal share" : ""}</span>
+  modal(`${esc(who)} — ${label}`, `<div class="drill-sum"><b class="num">${r.count} estimate${r.count === 1 ? "" : "s"} · ₹ ${inr(r.counted)}</b> <span class="muted">${fmonth(r.month)}, as on ${fdate(r.as_on)}${split ? " · each joint estimate shows this person's equal share" : ""}${d.cat ? " · amounts are the " + esc(d.cat) + " part only" : ""}</span>
     <span class="${match ? "ok" : "bad"}">${match ? "✓ adds up to the figure you clicked" : "⚠ does not match the figure you clicked (₹ " + inr(d.v) + ")"}</span></div>
     <div class="scroll"><table><thead><tr><th>Estimate</th><th>Date</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th>${d.metric === "converted" ? "Payment" : d.metric === "dropped" ? "Dropped" : d.metric === "new" ? "Raised" : "Age"}</th></tr></thead><tbody>
     ${r.rows.map(x => `<tr class="click" tabindex="0" data-id="${x.id}"><td>${esc(x.number)}</td><td>${fdate(x.est_date)}</td><td class="clip" title="${esc(x.customer)}">${esc(x.customer)}</td><td>${teamHtml(x.team)}</td>
       <td><span class="fees">${x.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td>
-      <td class="r num">${inr(x.counted)}${split && x.share !== 1 ? `<div class="muted" style="font-size:11px">of ${inr(x.total)}</div>` : ""}</td><td>${note(x)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing.</td></tr>`}</tbody>
+      <td class="r num">${inr(x.counted)}${Math.round(x.counted) !== Math.round(x.total) ? `<div class="muted" style="font-size:11px">of ${inr(x.total)}</div>` : ""}</td><td>${note(x)}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing.</td></tr>`}</tbody>
     <tfoot><tr class="total"><td colspan="5">Total</td><td class="r num">${inr(r.counted)}</td><td></td></tr></tfoot></table></div>`,
     `<button class="btn primary" id="cx">Close</button>`, dlg => { $("#cx").onclick = closeModal; activate(dlg, "tr[data-id]", tr => detail(+tr.dataset.id)); }, true);
 }
@@ -205,7 +209,7 @@ function trendChart(tr, W) {
   return `<svg width="${W}" height="${H}" role="img" aria-label="Conversions per month">
   <g class="grid">${ticks.map(v => `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join("")}</g>
   ${tr.map((x, i) => { const cx = L + bw * i + bw / 2, w = Math.min(40, bw * .6), last = i === tr.length - 1;
-    return `<g data-tip="<b>${fmonth(x.month)}</b><br>Converted: ${x.actual}<br>Value: ₹ ${inr(x.actual_amount)}">
+    return `<g class="${x.actual ? "hit" : ""}" ${x.actual ? `data-metric="converted" data-month="${x.month}" data-team="" data-who="" data-v="${Math.round(x.actual_amount)}" tabindex="0" role="button" aria-label="${fmonth(x.month)}: ${x.actual} converted, list them"` : ""} data-tip="<b>${fmonth(x.month)}</b><br>Converted: ${x.actual}<br>Value: ₹ ${inr(x.actual_amount)}${x.actual ? "<br>Click to list them" : ""}">
       <rect x="${cx - bw / 2}" y="${T}" width="${bw}" height="${H - T - B}" fill="transparent"/>
       ${x.actual ? `<path d="M${cx - w / 2},${y(0)} V${y(x.actual) + 4} a4,4 0 0 1 4,-4 h${w - 8} a4,4 0 0 1 4,4 V${y(0)} Z" fill="var(--s1)" opacity="${last ? 1 : .6}"/>` : ""}
       <text x="${cx}" y="${y(x.actual) - 6}" text-anchor="middle" class="v">${x.actual}</text>
@@ -217,8 +221,8 @@ function ageingChart(r, W) {
   return `<div class="legend">${cats.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c}</span>`).join("")}</div>
   <svg width="${W}" height="${B.length * rowH + 4}" role="img" aria-label="Ageing of pending estimates">
   ${B.map((b, i) => { let x = L; const y = i * rowH + 4;
-    return `<text x="${L - 10}" y="${y + 18}" text-anchor="end">${b} d</text>` + cats.map(c => { const v = r.ageing_segments[b][c], w = v / mx * avail; if (!v) return ""; const seg = `<rect x="${x}" y="${y + 5}" width="${Math.max(w - 2, 1)}" height="18" rx="3" fill="${CAT_COLOR[c]}" data-tip="<b>${b} days · ${c}</b><br>₹ ${inr(v)}"/>`; x += w; return seg; }).join("")
-      + `<text x="${x + 8}" y="${y + 18}" class="v" data-tip="${r.ageing_count[b]} estimate${r.ageing_count[b] === 1 ? "" : "s"} · ₹ ${inr(tot[i])}">₹ ${compact(tot[i])}</text>`; }).join("")}</svg>`;
+    return `<text x="${L - 10}" y="${y + 18}" text-anchor="end">${b} d</text>` + cats.map(c => { const v = r.ageing_segments[b][c], w = v / mx * avail; if (!v) return ""; const seg = `<rect class="hit" x="${x}" y="${y + 5}" width="${Math.max(w - 2, 1)}" height="18" rx="3" fill="${CAT_COLOR[c]}" data-metric="closing" data-bucket="${b}" data-cat="${esc(c)}" data-team="" data-who="" data-v="${Math.round(v)}" tabindex="0" role="button" aria-label="${b} days, ${c}: list these estimates" data-tip="<b>${b} days · ${c}</b><br>₹ ${inr(v)}<br>Click to list them"/>`; x += w; return seg; }).join("")
+      + `<text x="${x + 8}" y="${y + 18}" class="v hit" data-metric="closing" data-bucket="${b}" data-team="" data-who="" data-v="${Math.round(tot[i])}" tabindex="0" role="button" data-tip="${r.ageing_count[b]} estimate${r.ageing_count[b] === 1 ? "" : "s"} · ₹ ${inr(tot[i])}<br>Click to list them">₹ ${compact(tot[i])}</text>`; }).join("")}</svg>`;
 }
 
 /* ---------- estimates ---------- */

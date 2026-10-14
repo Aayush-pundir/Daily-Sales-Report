@@ -211,12 +211,13 @@ class H(BaseHTTPRequestHandler):
         metric = q.get("metric")
         if metric not in rules.METRICS: raise Err(400, "metric must be one of " + ", ".join(rules.METRICS))
         if q.get("bucket") and q["bucket"] not in rules.BUCKETS: raise Err(400, "unknown age group")
+        if q.get("category") and q["category"] not in rules.CATEGORIES: raise Err(400, "unknown fee type")
         try: as_on = date.fromisoformat(q["as_on"]) if q.get("as_on") else today()
         except ValueError: raise Err(400, "as_on must be YYYY-MM-DD")
         credit = q.get("credit") if q.get("credit") in ("primary", "split") else "team"
-        rows = rules.drill(db.load_estimates(c), ym, as_on, credit, q.get("team") or None, metric, q.get("bucket") or None)
+        rows = rules.drill(db.load_estimates(c), ym, as_on, credit, q.get("team") or None, metric, q.get("bucket") or None, q.get("category") or None)
         return {"month": ym, "as_on": min(rules.month_bounds(ym)[1], as_on).isoformat(), "credit": credit, "team": q.get("team") or None,
-                "metric": metric, "bucket": q.get("bucket") or None, "count": len(rows), "counted": sum(r["counted"] for r in rows), "rows": rows}
+                "metric": metric, "bucket": q.get("bucket") or None, "category": q.get("category") or None, "count": len(rows), "counted": sum(r["counted"] for r in rows), "rows": rows}
 
     def list_estimates(self, c, q):
         t = today(); out = []
