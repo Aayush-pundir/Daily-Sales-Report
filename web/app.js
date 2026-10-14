@@ -44,7 +44,7 @@ function render() {
   if (!S.me) return renderLogin(app);
   const tabs = [["dashboard", "Dashboard"], ["estimates", "Estimates"], ["followups", "Follow-ups"]];
   if (can("finance")) tabs.push(["finance", "Finance desk"]);
-  tabs.push(["history", "Reports"], ["rules", "Rules"]);
+  tabs.push(["history", "Reports"]);
   if (S.me.role === "admin") tabs.push(["admin", "Admin"]);
   if (!tabs.some(t => t[0] === S.tab)) S.tab = "dashboard";          // e.g. someone else signed in on this page before
   app.innerHTML = `<header class="top"><span class="brand">Daily Sales Report</span>
@@ -54,7 +54,7 @@ function render() {
   app.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
   $("#bell").onclick = openNotifications; pollNotifications(true);
   $("#out").onclick = async () => { await api("logout", { method: "POST", body: {} }); S.me = null; S.tab = "dashboard"; S.fu = null; S.filters = { status: "pending" }; S.unread = 0; render(); };
-  ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, rules: rulesTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
+  ({ dashboard, estimates, followups: followupsTab, finance, history: historyTab, admin }[S.tab])($("#main")).catch(e => $("#main").innerHTML = `<div class="err">${esc(e.message)}</div>`);
 }
 async function renderLogin(app) {
   $("#toast").style.display = "none";
@@ -317,23 +317,38 @@ const timeline = (list, age) => list.length ? `<ol class="tl">${list.map((f, i) 
 const canFollow = e => S.me.role !== "sales" || (S.me.sm_name && e.owners.split("|").includes(S.me.sm_name));
 
 async function followupsTab(el) {
-  S.fu = S.fu || { flag: "", sm: S.me.role === "sales" ? S.me.sm_name || "" : "", age: "30" };
-  const f = S.fu, qs = new URLSearchParams({ min_age: f.age, ...(f.sm ? { sm: f.sm } : {}), ...(f.flag ? { flag: f.flag } : {}) });
-  const [rows, all] = await Promise.all([api("followups?" + qs), api(`followups?min_age=${f.age}` + (f.sm ? "&sm=" + encodeURIComponent(f.sm) : ""))]);
-  const n = k => all.filter(r => r.flag === k).length;
-  el.innerHTML = `<div class="bar"><div style="margin-right:auto"><h2>Follow-ups on pending estimates</h2><div class="sub">Every pending estimate older than ${f.age} days, with the full timeline of follow-ups. Worst first.</div></div>
-    <label class="f">Older than<select id="fa">${[30, 60, 90].map(d => `<option value="${d}" ${String(d) === f.age ? "selected" : ""}>${d} days</option>`).join("")}</select></label>
-    <label class="f">Sales manager<select id="fm"><option value="">All</option>${S.meta.sms.map(s => `<option ${s === f.sm ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
-    <label class="f">Show<select id="ff"><option value="">All</option>${Object.entries(FLAG).map(([k, v]) => `<option value="${k}" ${f.flag === k ? "selected" : ""}>${v[1]}</option>`).join("")}</select></label></div>
-  <div class="attn" style="margin-bottom:16px"><span class="pill dropped">${n("none")} with no follow-up</span><span class="pill dropreq">${n("overdue")} overdue</span><span class="pill received">${n("ok")} on track</span><span class="muted" style="align-self:center">${all.length} estimates · ₹ ${inr(all.reduce((a, r) => a + r.total, 0))}</span></div>
-  <div class="list">${rows.map(r => `<div class="card fu"><div class="fu-h"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span>
-      <div class="muted">${teamHtml(r.team)} · ₹ ${inr(r.total)} · <b>${r.age} days</b> pending · ${r.followups.length} follow-up${r.followups.length === 1 ? "" : "s"}</div></div>
+  const DEF = { q: "", sm: S.me.role === "sales" ? S.me.sm_name || "" : "", cat: "", flag: "", age: "30", sort: "worst" };
+  const F = S.fu = Object.assign({}, DEF, S.fu || {});
+  const rows = (await api("followups?min_age=" + F.age)).map(r => ({ ...r, extra: r.followups.map(f => `${f.note} ${f.contact || ""} ${f.by_user}`).join(" ") }));
+  const FSORT = { worst: ["Worst first (no follow-up, then overdue)", null], ...Object.fromEntries(["oldest", "newest", "high", "low", "az", "za", "number", "sm"].map(k => [k, SORTS[k]])),
+    most: ["Most follow-ups", (a, b) => b.followups.length - a.followups.length], fewest: ["Fewest follow-ups", (a, b) => a.followups.length - b.followups.length],
+    lastold: ["Last follow-up: longest ago", (a, b) => (a.last || "").localeCompare(b.last || "")], nextsoon: ["Next follow-up: soonest", (a, b) => (a.next || "9999").localeCompare(b.next || "9999")] };
+  const extra = `<label class="f">Older than<select id="t-age">${opts([30, 60, 90].map(d => [String(d), d + " days"]), F.age)}</select></label>
+    <label class="f">Show<select id="t-flag">${opts(Object.entries(FLAG).map(([k, v]) => [k, v[1]]), F.flag, "All")}</select></label>`;
+  const sortMenu = Object.keys(FSORT).map(k => [k, FSORT[k][0]]);
+  el.innerHTML = `<div class="bar"><div style="margin-right:auto"><h2>Follow-ups on pending estimates</h2><div class="sub">Every pending estimate older than ${F.age} days, with the full timeline of follow-ups.</div></div></div>
+    <div class="toolbar"><label class="f grow">Search<input id="t-q" type="search" placeholder="Number, customer, name or notes…" value="${esc(F.q)}" autocomplete="off"></label>
+    <label class="f">Sales manager<select id="t-sm">${opts(S.meta.sms, F.sm, "All")}</select></label>
+    <label class="f">Fee type<select id="t-cat">${opts(S.meta.categories, F.cat, "All")}</select></label>${extra}
+    <label class="f">Sort by<select id="t-sort">${opts(sortMenu, F.sort)}</select></label><button class="btn" id="t-reset" title="Clear the search, filters and sorting">Reset</button></div>
+    <div class="attn" id="fu-chips" style="margin-bottom:16px"></div><div class="list" id="fu-list"></div>`;
+  const paint = () => {
+    const base = rows.filter(r => passes({ ...F, bucket: "" }, r)), vis = base.filter(r => !F.flag || r.flag === F.flag);
+    if (F.sort !== "worst") vis.sort(FSORT[F.sort][1]);
+    const n = k => base.filter(r => r.flag === k).length;
+    $("#fu-chips").innerHTML = `<span class="pill dropped">${n("none")} with no follow-up</span><span class="pill dropreq">${n("overdue")} overdue</span><span class="pill received">${n("ok")} on track</span><span class="muted" style="align-self:center">${vis.length}${vis.length !== rows.length ? " of " + rows.length : ""} estimates · ₹ ${inr(vis.reduce((a, r) => a + r.total, 0))}</span>`;
+    $("#fu-list").innerHTML = vis.map(r => `<div class="card fu"><div class="fu-h"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span>
+      <div class="muted">${teamHtml(r.team)} · ₹ ${inr(r.total)} · <b>${r.age} days</b> pending · ${r.followups.length} follow-up${r.followups.length === 1 ? "" : "s"}${r.next ? " · next " + fdate(r.next) : ""}</div></div>
       <span class="pill ${FLAG[r.flag][0]}">${FLAG[r.flag][1]}</span>
-      <button class="btn sm" data-open="${r.id}">Open</button>${canFollow(r) ? `<button class="btn sm primary" data-log="${r.id}">Log follow-up</button>` : ""}</div>${timeline(r.followups, r.age)}</div>`).join("") || `<div class="muted card">Nothing here — no estimate matches.</div>`}</div>`;
-  const set = (id, k) => $(id).onchange = e => { f[k] = e.target.value; render(); };
-  set("#fa", "age"); set("#fm", "sm"); set("#ff", "flag");
-  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
-  el.querySelectorAll("[data-log]").forEach(b => b.onclick = () => followupForm(rows.find(r => r.id == b.dataset.log)));
+      <button class="btn sm" data-open="${r.id}">Open</button>${canFollow(r) ? `<button class="btn sm primary" data-log="${r.id}">Log follow-up</button>` : ""}</div>${timeline(r.followups, r.age)}</div>`).join("") || `<div class="muted card">${rows.length ? "Nothing matches the search and filters." : "No pending estimate is older than this."}</div>`;
+    el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
+    el.querySelectorAll("[data-log]").forEach(b => b.onclick = () => followupForm(rows.find(r => r.id == b.dataset.log)));
+  };
+  let t; $("#t-q").oninput = e => { clearTimeout(t); t = setTimeout(() => { F.q = e.target.value; paint(); }, 120); };
+  [["#t-sm", "sm"], ["#t-cat", "cat"], ["#t-flag", "flag"], ["#t-sort", "sort"]].forEach(([id, k]) => $(id).onchange = e => { F[k] = e.target.value; paint(); });
+  $("#t-age").onchange = e => { F.age = e.target.value; render(); };
+  $("#t-reset").onclick = () => { S.fu = { ...DEF }; render(); };
+  paint();
 }
 function followupForm(e) {
   modal("Log follow-up · " + esc(e.number), `<form class="form" id="ff2">
@@ -418,20 +433,61 @@ async function submit(e, act, body) {
   catch (er) { const x = $("#ee"); if (x) x.innerHTML = `<div class="err">${esc(er.message)}</div>`; else toast(er.message); if (er.status === 409) setTimeout(() => detail(e.id), 900); }
 }
 
+/* ---------- shared search / filter / sort bar ---------- */
+const ageOf = d => Math.round((new Date(S.meta.today + "T00:00") - new Date(d + "T00:00")) / 864e5);
+const bucketOf = a => a <= 30 ? "0-30" : a <= 60 ? "31-60" : a <= 90 ? "61-90" : "90+";
+const SORTS = {
+  oldest: ["Oldest first", (a, b) => b.age - a.age], newest: ["Newest first", (a, b) => a.age - b.age],
+  high: ["Amount: high to low", (a, b) => b.total - a.total], low: ["Amount: low to high", (a, b) => a.total - b.total],
+  az: ["Customer A–Z", (a, b) => a.customer.localeCompare(b.customer)], za: ["Customer Z–A", (a, b) => b.customer.localeCompare(a.customer)],
+  number: ["Estimate number", (a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })], sm: ["Sales manager A–Z", (a, b) => a.team.localeCompare(b.team) || b.age - a.age],
+};
+const passes = (F, it) => (!F.q || [it.number, it.customer, it.team, it.extra || ""].join(" ").toLowerCase().includes(F.q.toLowerCase().trim()))
+  && (!F.sm || it.owners.split("|").includes(F.sm)) && (!F.cat || it.categories.includes(F.cat)) && (!F.bucket || bucketOf(it.age) === F.bucket);
+const opts = (arr, cur, all) => (all ? `<option value="">${all}</option>` : "") + arr.map(a => { const [v, l] = Array.isArray(a) ? a : [a, a]; return `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`; }).join("");
+function toolbar(F, { sorts, bucket = true, extra = "" }) {
+  return `<div class="toolbar"><label class="f grow">Search<input id="t-q" type="search" placeholder="Estimate no., customer, sales manager…" value="${esc(F.q)}" autocomplete="off"></label>
+    <label class="f">Sales manager<select id="t-sm">${opts(S.meta.sms, F.sm, "All")}</select></label>
+    <label class="f">Fee type<select id="t-cat">${opts(S.meta.categories, F.cat, "All")}</select></label>
+    ${bucket ? `<label class="f">Age<select id="t-b">${opts(S.meta.buckets.map(b => [b, b.replace("-", "–") + " days"]), F.bucket, "All")}</select></label>` : ""}
+    ${extra}<label class="f">Sort by<select id="t-sort">${opts(sorts.map(k => [k, SORTS[k]?.[0] || k]), F.sort)}</select></label>
+    <button class="btn" id="t-reset" title="Clear the search, filters and sorting">Reset</button></div>`;
+}
+function bindToolbar(root, F, defaults, paint, refetch) {
+  let t; $("#t-q", root).oninput = e => { clearTimeout(t); t = setTimeout(() => { F.q = e.target.value; paint(); }, 120); };
+  [["#t-sm", "sm"], ["#t-cat", "cat"], ["#t-b", "bucket"], ["#t-sort", "sort"]].forEach(([id, k]) => { const x = $(id, root); if (x) x.onchange = e => { F[k] = e.target.value; paint(); }; });
+  $("#t-reset", root).onclick = () => { Object.assign(F, defaults); refetch(); };
+}
+
 /* ---------- finance desk ---------- */
 async function finance(el) {
   const [drops, pend, crs] = await Promise.all([api("estimates?drop_requested=1"), api("estimates?status=pending"), api("change-requests?status=open")]);
-  el.innerHTML = `<div class="bar"><h2>Finance desk</h2></div>
-  <div class="card" style="margin-bottom:16px"><h3>Change requests from sales (${crs.length})</h3><div class="hint">Any finance person can approve (the change is applied immediately) or reject with a reason. Sales and finance are notified either way.</div>
-    ${crs.length ? `<div class="list">${crs.map(cr => `<div class="item" style="display:block"><div style="display:flex;gap:12px;justify-content:space-between"><div><b>${esc(cr.number)}</b> · <span title="${esc(cr.customer)}">${esc(cr.customer)}</span></div><button class="btn sm" data-open="${cr.estimate_id}">Open estimate</button></div>${crCard(cr)}</div>`).join("")}</div>` : `<div class="muted">Nothing waiting.</div>`}</div>
-  <div class="card" style="margin-bottom:16px"><h3>Drop requests from sales (${drops.length})</h3><div class="hint">Open a request to approve it (writes the estimate off) or reject it (keeps it pending).</div>
-    ${drops.length ? `<div class="list">${drops.map(r => `<div class="item click" tabindex="0" data-id="${r.id}"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span><div class="muted">“${esc(r.drop_reason)}” — ${esc(r.drop_requested_by)}, ${fdate(r.drop_requested_on)}</div></div><div class="num"><b>₹ ${inr(r.total)}</b></div></div>`).join("")}</div>` : `<div class="muted">Nothing waiting.</div>`}</div>
-  <div class="card"><h3>Pending — oldest first (${pend.length})</h3><div class="hint">Open an estimate to record the payment and tax invoice. Showing the oldest 40.</div><div class="scroll"><table><thead><tr><th>Estimate</th><th>Customer</th><th>Sales manager</th><th class="r">Amount</th><th class="r">Age</th><th></th></tr></thead><tbody>
-  ${pend.sort((a, b) => b.age - a.age).slice(0, 40).map(r => `<tr class="click" tabindex="0" data-id="${r.id}"><td>${esc(r.number)}</td><td class="clip" title="${esc(r.customer)}">${esc(r.customer)}</td><td>${teamHtml(r.team)}</td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}</td></tr>`).join("")}</tbody></table></div></div>`;
-  activate(el, "[data-id]", x => detail(+x.dataset.id));
-  el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
-  el.querySelectorAll("[data-cr-ok]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crOk), "approve"));
-  el.querySelectorAll("[data-cr-no]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crNo), "reject"));
+  const DEF = { q: "", sm: "", cat: "", bucket: "", sort: "oldest", limit: 50 }, F = S.fd = Object.assign({}, DEF, S.fd || {});
+  const items = {
+    cr: crs.map(c => ({ ...c, team: c.owners.split("|").join(" & "), age: c.est_date ? ageOf(c.est_date) : 0, extra: `${c.reason} ${c.requested_by}` })),
+    dr: drops.map(d => ({ ...d, extra: `${d.drop_reason || ""} ${d.drop_requested_by || ""}` })), pd: pend,
+  };
+  el.innerHTML = `<div class="bar"><h2>Finance desk</h2></div>${toolbar(F, { sorts: ["oldest", "newest", "high", "low", "az", "za", "number", "sm"] })}
+    <div class="card" id="fd-cr" style="margin-bottom:16px"></div><div class="card" id="fd-dr" style="margin-bottom:16px"></div><div class="card" id="fd-pd"></div>`;
+  const shown = (arr, label) => `${arr.length}${arr.length !== items[label].length ? " of " + items[label].length : ""}`;
+  const paint = () => {
+    const by = SORTS[F.sort][1], cr = items.cr.filter(x => passes(F, x)).sort(by), dr = items.dr.filter(x => passes(F, x)).sort(by), pd = items.pd.filter(x => passes(F, x)).sort(by);
+    $("#fd-cr").innerHTML = `<h3>Change requests from sales (${shown(cr, "cr")})</h3><div class="hint">Any finance person can approve (the change is applied immediately) or reject with a reason. Sales and finance are notified either way.</div>
+      ${cr.length ? `<div class="list">${cr.map(x => `<div class="item" style="display:block"><div style="display:flex;gap:12px;justify-content:space-between"><div><b>${esc(x.number)}</b> · <span title="${esc(x.customer)}">${esc(x.customer)}</span> <span class="muted">· ${teamHtml(x.team)} · ₹ ${inr(x.total)}</span></div><button class="btn sm" data-open="${x.estimate_id}">Open estimate</button></div>${crCard(x)}</div>`).join("")}</div>` : `<div class="muted">${items.cr.length ? "Nothing matches the search and filters." : "Nothing waiting."}</div>`}`;
+    $("#fd-dr").innerHTML = `<h3>Drop requests from sales (${shown(dr, "dr")})</h3><div class="hint">Open a request to approve it (writes the estimate off) or reject it (keeps it pending).</div>
+      ${dr.length ? `<div class="list">${dr.map(r => `<div class="item click" tabindex="0" data-id="${r.id}"><div class="grow"><b>${esc(r.number)}</b> · <span title="${esc(r.customer)}">${esc(r.customer)}</span> <span class="muted">· ${teamHtml(r.team)}</span><div class="muted">“${esc(r.drop_reason)}” — ${esc(r.drop_requested_by)}, ${fdate(r.drop_requested_on)}</div></div><div class="num"><b>₹ ${inr(r.total)}</b></div></div>`).join("")}</div>` : `<div class="muted">${items.dr.length ? "Nothing matches the search and filters." : "Nothing waiting."}</div>`}`;
+    const page = pd.slice(0, F.limit);
+    $("#fd-pd").innerHTML = `<h3>Pending estimates (${shown(pd, "pd")}) <span class="muted num" style="font-weight:400">· ₹ ${inr(pd.reduce((a, r) => a + r.total, 0))}</span></h3><div class="hint">Open an estimate to record the payment and tax invoice. Sorted by “${esc(SORTS[F.sort][0])}”.</div>
+      <div class="scroll"><table><thead><tr><th>Estimate</th><th>Customer</th><th>Sales manager</th><th>Fees</th><th class="r">Amount</th><th class="r">Age</th><th></th></tr></thead><tbody>
+      ${page.map(r => `<tr class="click" tabindex="0" data-id="${r.id}"><td>${esc(r.number)}</td><td class="clip" title="${esc(r.customer)}">${esc(r.customer)}</td><td>${teamHtml(r.team)}</td><td><span class="fees">${r.categories.map(c => `<span><i style="background:${CAT_COLOR[c]}"></i>${c.replace(" fees", "")}</span>`).join("")}</span></td><td class="r num">${inr(r.total)}</td><td class="r num">${r.age}d</td><td>${pill(r)}${r.change_requested ? ' <span class="pill cr">change requested</span>' : ""}</td></tr>`).join("") || `<tr><td colspan="7" class="muted">Nothing matches the search and filters.</td></tr>`}</tbody></table></div>
+      ${pd.length > page.length ? `<div style="margin-top:12px"><button class="btn" id="more">Show ${Math.min(50, pd.length - page.length)} more (${pd.length - page.length} left)</button></div>` : ""}`;
+    activate(el, "tr[data-id], .item[data-id]", x => detail(+x.dataset.id));
+    el.querySelectorAll("[data-open]").forEach(b => b.onclick = () => detail(+b.dataset.open));
+    el.querySelectorAll("[data-cr-ok]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crOk), "approve"));
+    el.querySelectorAll("[data-cr-no]").forEach(b => b.onclick = () => crDecide(crs.find(c => c.id == b.dataset.crNo), "reject"));
+    if ($("#more")) $("#more").onclick = () => { F.limit += 50; paint(); };
+  };
+  bindToolbar(el, F, DEF, () => { F.limit = DEF.limit; paint(); }, () => render()); paint();
 }
 
 /* ---------- published history ---------- */
@@ -444,30 +500,6 @@ async function historyTab(el) {
     $("#snap").innerHTML = `<h3>${fdate(s.day)} · published by ${esc(s.published_by)}</h3><dl class="kv"><dt>Opening</dt><dd class="num">₹ ${inr(t.opening)}</dd><dt>+ New</dt><dd class="num">₹ ${inr(t.new)}</dd><dt>− Converted</dt><dd class="num">₹ ${inr(t.converted)}</dd><dt>− Dropped</dt><dd class="num">₹ ${inr(t.dropped)}</dd><dt><b>Closing</b></dt><dd class="num"><b>₹ ${inr(t.closing)}</b></dd></dl>
       <table><thead><tr><th>Team</th><th class="r">Converted</th><th class="r">Closing</th></tr></thead><tbody>${r.teams.map(x => `<tr><td>${esc(x.team)}</td><td class="r num">${inr(x.converted)}</td><td class="r num">${inr(x.closing)}</td></tr>`).join("")}</tbody></table>`;
   });
-}
-
-/* ---------- rules ---------- */
-async function rulesTab(el) {
-  el.innerHTML = `<div class="bar"><h2>How this works</h2></div><div class="grid g2">
-  <div class="card help"><h3>Who enters what</h3><ul>
-   <li><b>Sales</b> raise estimates (number, date, customer, fees by type, sales manager). They can edit an estimate while it is pending, and <i>propose</i> a drop with a reason. They can see everyone's numbers.</li>
-   <li>Finance prepares the estimate elsewhere and emails the PDF; <b>sales enter the details here from that PDF</b> (and can attach it).</li>
-   <li><b>Finance</b> records the payment and tax invoice (which converts the estimate), approves or rejects drop requests, may drop directly with a reason, and publishes the daily report.</li>
-   <li><b>Admin</b> manages users and the sales-manager list, and is the only role that can reopen a closed estimate.</li></ul></div>
-  <div class="card help"><h3>Rules the system enforces</h3><ul>
-   <li><b>Changing an estimate:</b> once saved, sales can't edit it directly. They use <i>Request change</i> (what to change + why). Everyone is notified, any finance person can approve (applied at once) or reject with a reason, and the requester can withdraw. If the estimate changed after the request was made, finance rejects it and sales ask again. Follow-ups, attachments and drop proposals don't need a request.</li>
-   <li>Estimate numbers are unique. One estimate can carry several fee lines (one per fee type); status belongs to the whole estimate.</li>
-   <li>Estimate date can't be in the future; payment can't be before the estimate or in the future; a tax invoice number is mandatory to mark received.</li>
-   <li>Amounts must be positive. Sales can only raise/edit estimates they are a named sales manager on.</li>
-   <li>Closed (received/dropped) estimates are locked. Every change is logged; two people editing the same estimate can't overwrite each other.</li></ul></div>
-  <div class="card help"><h3>How the numbers are built</h3><ul>
-   <li><b>Opening</b> = estimates booked in earlier months that were still pending on the 1st. <b>New</b> = estimates booked in the month (the <i>report month</i> on each estimate, normally its date's month). <b>Converted / Dropped</b> = closed in the month (any estimate date).</li>
-   <li><b>Closing = Opening + New − Converted − Dropped</b> = what is pending as on the report date. Because closure dates are stored, you can pick any past month and get the same answer the workbook would have given.</li>
-   <li><b>Follow-ups:</b> any pending estimate older than 30 days is on the Follow-ups board with its full timeline. It shows <i>No follow-up yet</i> if none is logged, <i>Overdue</i> once the promised next date passes (or 7 days after the last one when no next date was set), otherwise <i>On track</i>. Sales log their own; finance can log on any.</li>
-   <li><b>Payment</b> is in full only: finance marks the estimate paid and enters the payment date. There is no drop date to estimate; a drop is recorded with a reason when finance approves it.</li>
-   <li><b>Age</b> = report date − estimate date: 0–30, 31–60, 61–90, 90+ days.</li>
-   <li>The first name on an estimate is the <b>primary salesperson</b>. "A &amp; B" and "B &amp; A" are separate rows, as in the workbook; switch <i>Credit</i> to count joint deals for the primary only, or split them equally.</li></ul></div>
-  <div class="card help"><h3>Daily routine</h3><ul><li>Sales update estimates through the day.</li><li>Finance records receipts and decisions.</li><li>Finance clicks <b>Publish today's report</b> — it freezes the day's numbers under <i>Published reports</i> and anyone can open the dashboard live instead of waiting for the email.</li></ul></div></div>`;
 }
 
 /* ---------- admin ---------- */

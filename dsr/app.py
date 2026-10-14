@@ -280,7 +280,8 @@ class H(BaseHTTPRequestHandler):
             if q.get("sm") and q["sm"] not in e["owners"].split("|"): continue
             if q.get("flag") and q["flag"] != flag: continue
             out.append({"id": e["id"], "number": e["number"], "customer": e["customer"], "owners": e["owners"], "team": rules.team_label(e["owners"]),
-                        "total": e["total"], "age": age, "flag": flag, "followups": f, "version": e["version"],
+                        "total": e["total"], "age": age, "flag": flag, "followups": f, "version": e["version"], "est_date": e["est_date"],
+                        "categories": [l["category"] for l in e["lines"]],
                         "last": f[-1]["on_date"] if f else None, "next": next((x["next_date"] for x in reversed(f) if x["next_date"]), None) if f else None})
         order = {"none": 0, "overdue": 1, "ok": 2}
         out.sort(key=lambda r: (order[r["flag"]], -r["age"]))
@@ -478,7 +479,14 @@ class H(BaseHTTPRequestHandler):
         args = []
         if q.get("status"): sql += " WHERE cr.status=?"; args.append(q["status"])
         if q.get("estimate_id", "").isdigit(): sql += (" AND" if args else " WHERE") + " cr.estimate_id=?"; args.append(int(q["estimate_id"]))
-        return [self._cr_row(r) for r in c.execute(sql + " ORDER BY cr.id DESC LIMIT 200", args)]
+        rows = [self._cr_row(r) for r in c.execute(sql + " ORDER BY cr.id DESC LIMIT 200", args)]
+        info = {e["id"]: e for e in db.load_estimates(c)} if rows else {}       # so the Finance desk can search / filter / sort them like any estimate
+        for r in rows:
+            e = info.get(r["estimate_id"])
+            r["est_date"] = e["est_date"] if e else None
+            r["categories"] = [l["category"] for l in e["lines"]] if e else []
+            r["total"] = e["total"] if e else 0
+        return rows
 
     def change_decision(self, c, rid, act, b, user):
         r = c.execute("SELECT * FROM change_requests WHERE id=?", (rid,)).fetchone()
