@@ -3,6 +3,20 @@
 **One shared screen that replaces the daily Excel + email.**
 Sales type in the estimates they raise, Finance records the payments, and everybody sees the same up-to-date picture: how much is waiting to be paid, how old it is, who is chasing it, and what changed today.
 
+## Quick start (about 5 minutes)
+
+You need **Python 3.9 or newer** and **git** (a Mac already has both; on Windows: `winget install Python.Python.3.12` and `winget install Git.Git`).
+
+```bash
+git clone https://github.com/Aayush-pundir/Daily-Sales-Report.git
+cd Daily-Sales-Report
+python3 -m dsr            # on Windows: python -m dsr
+```
+
+Open **http://127.0.0.1:8080** and click **Administrator** — there is no password when it runs on your own computer. In **Admin**, press **Create logins for all sales managers** and add your finance people with **+ Add user**.
+
+*Optional — start with your existing Excel (do this once, before entering anything):* `pip3 install openpyxl`, then `python3 -m dsr.import_xlsx "/path/to/Revenue.xlsx" --as-of 2026-10-13`. Details in [section 12](#12-installing-running-and-looking-after-it).
+
 > If you only read one section, read **[1. The 2-minute version](#1-the-2-minute-version)** and **[4. The rules](#4-the-rules-in-plain-words)**.
 
 ---
@@ -205,9 +219,10 @@ sequenceDiagram
 | Screen | Who it is for | What you do there |
 |---|---|---|
 | **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted (green) → Dropped (red) → Closing. Below, in the same order as the old *Reporting* sheet: the **sales-manager movement table**, then the **closing-estimates ageing table by sales manager** (0–30 / 31–60 / 61–90 / 90+ days, total and % of total), then conversions per month, the ageing chart by fee type, the fee-type table and the biggest pending estimates. **Every figure is clickable and lists exactly the estimates behind it** — the five tiles, every number in both sales-manager tables (including the Total rows and each age column), every cell of the fee-type table (that fee type's part only), each segment and total in the ageing-by-fee-type chart, and each month's bar in the conversions chart. In the *Largest pending* list, a click opens the estimate. Click Arshdeep's *Converted* and you get the estimates he converted this month; click Meisheil's *31–60 days* and you get just those. The list always adds up to the number you clicked (and says so). Click a *name* instead to see that row's own pending estimates ("Meisheil" shows only Meisheil's own, not the ones shared as "Meisheil & Arshdeep" or "Arshdeep & Meisheil"; each is its own row). The same applies in the other two credit modes, the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
-| **Estimates** | Everyone | Search and filter every estimate. **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
+| **Estimates** | Everyone | Search and filter every estimate (by status, sales manager, fee type, age, or *awaiting finance* change requests; press Enter or click away to apply). **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
 | **Follow-ups** | Everyone | Every pending estimate over 30 days (or 60 / 90) with its timeline. **Search** (number, customer, name, or what was discussed), **filter** by sales manager, fee type and flag, and **sort** (worst first, oldest, amount, most/fewest follow-ups, last or next follow-up…). **Log follow-up** right from the card. Sales see their own by default. |
 | **Finance desk** | Finance | Three lists: **change requests** (approve / reject), **drop requests**, and **all pending estimates** (open one to record payment). One bar at the top **searches** all three (number, customer, sales manager, or the reason given), **filters** by sales manager, fee type and age, and **sorts** (oldest, newest, amount, customer, number, sales manager). *Reset* clears it. |
+| **Sign-in page** | Everyone | On your own computer: **click your name** (no password). See section 12 for how this switches itself off on a network. |
 | **Admin** | Admin | Users, sales-manager list, API keys for other systems, webhook. |
 | **🔔 bell** | Everyone | Shared notifications: change requested / approved / rejected / withdrawn. A red number shows how many you have not seen. It refreshes by itself about every 20 seconds. |
 
@@ -253,6 +268,9 @@ How a joint deal ("Arshdeep & Meisheil") appears in the sales-manager table:
 | **Team, primary first** *(default, matches the old sheet)* | One row per team. "Arshdeep & Meisheil" and "Meisheil & Arshdeep" are separate rows. The primary name is in bold. |
 | **Primary salesperson only** | The whole amount goes to the primary. |
 | **Split equally** | The amount is shared equally between the names. |
+
+### Click any number to see what is behind it
+Every figure on the dashboard — the five tiles, each cell of the two sales-manager tables (including the Total rows and every age column), each cell of the fee-type table, each bar segment in the ageing chart and each month in the conversions chart — opens a list of exactly the estimates that make up that number. The list says how many there are, shows its own total, and confirms **"✓ adds up to the figure you clicked"**. Click a team **name** to see that team's own pending estimates instead. Zero figures are not clickable (there is nothing behind them).
 
 ### Counts vs. amounts
 A "count" is a number of **estimates** (not fee lines). An estimate with three fee lines counts once. (The old Excel counted rows, so counts can differ slightly from the old sheet; **amounts match**.)
@@ -474,8 +492,9 @@ Python **3.9 or newer** (a Mac's built-in `python3` works). Nothing else. (Optio
 ### Start it
 ```bash
 python3 -m dsr
-# open http://localhost:8080
+# the Terminal prints:  Daily Sales Report is running.  Open  http://127.0.0.1:8080  ...
 ```
+Leave that Terminal window open while you use the app; press `Ctrl + C` to stop it.
 **Signing in — no password on your own computer.** When the server runs on your own computer (the default), the sign-in page simply shows everyone's name: **click your name and you are in.** On first run the only name is *Administrator*. Then open **Admin** to:
 1. add the **sales managers** (the import adds them for you),
 2. add **users**: press **Create logins for all sales managers** for a one-click start, and **+ Add user** for your finance people (a *sales* user is linked to one sales manager; *finance* users are not linked),
@@ -485,9 +504,10 @@ python3 -m dsr
 
 ### Load the old Excel (one time)
 ```bash
-pip install openpyxl
-python3 -m dsr.import_xlsx Revenue.xlsx --as-of 2026-10-13
+pip3 install openpyxl
+python3 -m dsr.import_xlsx "/path/to/Revenue.xlsx" --as-of 2026-10-13
 ```
+`--as-of` is the date of the report you are loading and must be written exactly as `YYYY-MM-DD` (anything else is rejected with a clear message). Load the workbook **once, before entering real data**. If the database already contains estimates the import refuses to run; add **`--reset`** to throw the existing estimates away and load the workbook again (users and sales managers are kept).
 It reads the three data sheets (*Current Month*, *Previous Month*, *Dropped till last Month*). The old **Summary** sheet is ignored and **Reporting** is the sheet the app reproduces. Notes:
 - The workbook has no payment/drop **dates**, so already-paid or dropped rows get the `--as-of` date (older drops get 30 Sep). Roll-forwards **before** the import month are therefore approximate; from then on, dates are real.
 - Dropped rows in the old sheet had no fee type, so they default to *Set-up fees*.
@@ -559,6 +579,15 @@ Sessions last 7 days. If the server was restarted with a different database file
 
 **"The notification badge didn't appear."**
 It refreshes about every 20 seconds while the tab is visible. Click the 🔔 to refresh immediately.
+
+**"Import says: This database already contains estimates."**
+The workbook was already loaded. To load it again from scratch, add `--reset` to the import command (it removes the estimates and re-imports; users are kept).
+
+**"Import says: … is not a date."**
+The `--as-of` value must be exactly `YYYY-MM-DD`, for example `2026-10-13`. A stray character after the day (for example a `~` left over from pasting) is rejected.
+
+**"I clicked a number and nothing happened."**
+Figures that are zero have nothing behind them, so they are not clickable. Every non-zero figure on the dashboard opens its list.
 
 **"Upload says columns are missing."**
 Download the template from the upload dialog and keep its header names.
