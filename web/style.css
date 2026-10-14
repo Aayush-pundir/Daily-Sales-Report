@@ -145,3 +145,7 @@ ul.notes .muted{font-size:12px}.n-act{margin-top:6px}
 .chip{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:2px 4px 2px 10px;border-radius:99px;background:var(--idle-bg);font-size:13px;font-weight:500;vertical-align:middle}
 .chip button{border:0;background:none;cursor:pointer;color:var(--ink2);border-radius:50%;width:20px;height:20px;line-height:20px}
 .chip button:hover{background:var(--line);color:var(--ink)}
+/* ageing table */
+th .dot{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px}
+td.age2{color:var(--warn);font-weight:600}td.age3{color:var(--bad);font-weight:600}
+tr.share td{color:var(--ink2);font-size:13px;border-top:1px dashed var(--line)}
