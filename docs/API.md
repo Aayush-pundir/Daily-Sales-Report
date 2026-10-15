@@ -17,7 +17,7 @@ curl -X POST $BASE/api/estimates -H "Authorization: Bearer $KEY" -H "Content-Typ
   "external_ref": "CRM-DEAL-1042",            # your id; replaying the same ref returns the same estimate
   "number": "EST-26-27/264", "est_date": "2026-10-13", "period": "2026-10",   # period optional (defaults to date's month)
   "customer": "Acme Pvt Ltd",
-  "owners": ["Arshdeep", "Meisheil"],         # first = primary salesperson; must exist in the SM list
+  "owners": ["Asha", "Rohan"],         # first = primary salesperson; must exist in the SM list
   "lines": [{"category": "Annual fees", "amount": 90000}, {"category": "Set-up fees", "amount": 10000}]
 }'
 # 200 {"id": 131}   |   200 {"id": 131, "existing": true}   |   422 {"error": "...", "errors": [...]}
@@ -45,7 +45,7 @@ Finance and admin keys can still `PUT /api/estimates/{id}` directly. `GET /api/n
 ## Other calls
 | | |
 |---|---|
-| `GET /api/estimates?status=pending&sm=Arshdeep&category=…&bucket=90%2B&q=text` | list (adds `age`, `bucket`, `team`) |
+| `GET /api/estimates?status=pending&sm=Asha&category=…&bucket=90%2B&q=text` | list (adds `age`, `bucket`, `team`) |
 | `GET /api/estimates/{id}` | detail with `lines`, `audit`, `files`, `version` |
 | `PUT /api/estimates/{id}` | **finance/admin only**: edit a pending estimate; body as create **plus `"version"`** (sales use change requests) |
 | `POST /api/estimates/{id}/receive` | finance: `{version, invoice_no, invoice_date, received_on, payment_ref}` |
@@ -55,7 +55,7 @@ Finance and admin keys can still `PUT /api/estimates/{id}` directly. `GET /api/n
 | `POST /api/estimates/{id}/files` | `{filename, content: <base64 pdf/png/jpg>}` |
 | `POST /api/estimates/{id}/followups` | `{on_date, kind: Call\|Email\|WhatsApp\|Meeting\|Other, contact, note, next_date}` (sales/finance keys; pending estimates only) |
 | `GET /api/followups?min_age=30&sm=&flag=none\|overdue\|ok` | pending estimates older than `min_age` days with their follow-up timelines |
-| `GET /api/report/drill?month=2026-10&credit=team&team=Arshdeep&metric=converted` | the estimates behind one dashboard number. `metric` = opening / new / converted / dropped / closing; add `&bucket=31-60` to narrow *closing* to one age group, and `&category=Annual fees` to narrow to one fee type (then each row's `counted` is just that fee type's part); omit `team` for everyone (in team mode a team is `Arshdeep\|Meisheil`, primary first). The rows' `counted` values add up to the figure on the dashboard. |
+| `GET /api/report/drill?month=2026-10&credit=team&team=Asha&metric=converted` | the estimates behind one dashboard number. `metric` = opening / new / converted / dropped / closing; add `&bucket=31-60` to narrow *closing* to one age group, and `&category=Annual fees` to narrow to one fee type (then each row's `counted` is just that fee type's part); omit `team` for everyone (in team mode a team is `Asha\|Rohan`, primary first). The rows' `counted` values add up to the figure on the dashboard. |
 | `GET /api/report?month=2026-10&credit=team\|primary\|split` | the dashboard numbers |
 | `GET /api/export.csv` | all estimates |
 
@@ -65,6 +65,6 @@ Finance and admin keys can still `PUT /api/estimates/{id}` directly. `GET /api/n
 Admin sets a URL and secret. Events: `estimate.created`, `estimate.updated`, `estimate.drop_requested`, `estimate.followup`, `estimate.change_requested`, `estimate.change_approved`, `estimate.change_rejected`, `estimate.change_withdrawn`, `estimate.received`, `estimate.dropped`, `estimate.reopened`.
 ```json
 {"event": "estimate.received", "at": "2026-10-13T15:02:11",
- "estimate": {"id": 131, "number": "EST-26-27/264", "status": "received", "external_ref": "CRM-DEAL-1042", "total": 100000, "closed_on": "2026-10-13", "invoice_no": "INV-1", "owners": "Arshdeep|Meisheil", "lines": [...]}}
+ "estimate": {"id": 131, "number": "EST-26-27/264", "status": "received", "external_ref": "CRM-DEAL-1042", "total": 100000, "closed_on": "2026-10-13", "invoice_no": "INV-1", "owners": "Asha|Rohan", "lines": [...]}}
 ```
 Verify: `X-DSR-Signature: sha256=` + HMAC-SHA256(secret, raw body). Delivery is best-effort (one attempt, 8 s timeout, failures are logged), so treat the CRM as eventually consistent and re-sync with `GET /api/estimates` if needed.

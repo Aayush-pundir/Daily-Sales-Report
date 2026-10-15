@@ -14,7 +14,7 @@ import openpyxl
 
 from . import db, rules
 
-ALIASES = {"Arshdeep Singh": "Arshdeep"}
+ALIASES = {"Asha Rao": "Asha"}
 
 
 def d(v):

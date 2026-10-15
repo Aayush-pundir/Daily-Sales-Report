@@ -109,7 +109,7 @@ There are three kinds of user. An administrator creates the accounts.
 | **Received** | The customer paid **in full**. Finance has entered the tax-invoice number and the payment date. In the old sheet this was "converted to tax invoice". |
 | **Dropped** | The estimate is written off — the deal will not happen. |
 | **Primary salesperson** | The *first* name on an estimate. They get the credit. Other names are "also credited" on a joint deal. |
-| **Team** | The full list of names on an estimate, in order — "Arshdeep & Meisheil" and "Meisheil & Arshdeep" are **different** teams because the primary differs. |
+| **Team** | The full list of names on an estimate, in order — "Asha & Rohan" and "Rohan & Asha" are **different** teams because the primary differs. |
 | **Report month** | The month an estimate is counted in. Normally the month of its date. It can differ (an estimate dated 8 Oct can be filed under September, as in the old sheet). |
 | **Opening** | Estimates from earlier months that were still unpaid on the 1st of the month. |
 | **New** | Estimates counted in the month. |
@@ -218,7 +218,7 @@ sequenceDiagram
 
 | Screen | Who it is for | What you do there |
 |---|---|---|
-| **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted (green) → Dropped (red) → Closing. Below, in the same order as the old *Reporting* sheet: the **sales-manager movement table**, then the **closing-estimates ageing table by sales manager** (0–30 / 31–60 / 61–90 / 90+ days, total and % of total), then conversions per month, the ageing chart by fee type, the fee-type table and the biggest pending estimates. **Every figure is clickable and lists exactly the estimates behind it** — the five tiles, every number in both sales-manager tables (including the Total rows and each age column), every cell of the fee-type table (that fee type's part only), each segment and total in the ageing-by-fee-type chart, and each month's bar in the conversions chart. In the *Largest pending* list, a click opens the estimate. Click Arshdeep's *Converted* and you get the estimates he converted this month; click Meisheil's *31–60 days* and you get just those. The list always adds up to the number you clicked (and says so). Click a *name* instead to see that row's own pending estimates ("Meisheil" shows only Meisheil's own, not the ones shared as "Meisheil & Arshdeep" or "Arshdeep & Meisheil"; each is its own row). The same applies in the other two credit modes, the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
+| **Dashboard** | Everyone | The live picture. Top row: Opening → New → Converted (green) → Dropped (red) → Closing. Below, in the same order as the old *Reporting* sheet: the **sales-manager movement table**, then the **closing-estimates ageing table by sales manager** (0–30 / 31–60 / 61–90 / 90+ days, total and % of total), then conversions per month, the ageing chart by fee type, the fee-type table and the biggest pending estimates. **Every figure is clickable and lists exactly the estimates behind it** — the five tiles, every number in both sales-manager tables (including the Total rows and each age column), every cell of the fee-type table (that fee type's part only), each segment and total in the ageing-by-fee-type chart, and each month's bar in the conversions chart. In the *Largest pending* list, a click opens the estimate. Click Asha's *Converted* and you get the estimates he converted this month; click Rohan's *31–60 days* and you get just those. The list always adds up to the number you clicked (and says so). Click a *name* instead to see that row's own pending estimates ("Rohan" shows only Rohan's own, not the ones shared as "Rohan & Asha" or "Asha & Rohan"; each is its own row). The same applies in the other two credit modes, the fee-type table and the ten biggest pending estimates. Choose the **month** and the **credit** mode. Alert buttons appear when something needs attention (change requests, follow-ups, drop requests). |
 | **Estimates** | Everyone | Search and filter every estimate (by status, sales manager, fee type, age, or *awaiting finance* change requests; press Enter or click away to apply). **+ New estimate**, **Upload file…**, and open any row for the full detail, follow-ups, history and actions. |
 | **Follow-ups** | Everyone | Every pending estimate over 30 days (or 60 / 90) with its timeline. **Search** (number, customer, name, or what was discussed), **filter** by sales manager, fee type and flag, and **sort** (worst first, oldest, amount, most/fewest follow-ups, last or next follow-up…). **Log follow-up** right from the card. Sales see their own by default. |
 | **Finance desk** | Finance | Three lists: **change requests** (approve / reject), **drop requests**, and **all pending estimates** (open one to record payment). One bar at the top **searches** all three (number, customer, sales manager, or the reason given), **filters** by sales manager, fee type and age, and **sorts** (oldest, newest, amount, customer, number, sales manager). *Reset* clears it. |
@@ -261,11 +261,11 @@ Because the app stores the **month each estimate belongs to** and the **date it 
 Closing estimates are grouped by days since the estimate date: **0–30, 31–60, 61–90, 90+**. A day count of exactly 30 is in the first group; 31 is in the second, and so on.
 
 ### Credit modes (the "Credit" drop-down)
-How a joint deal ("Arshdeep & Meisheil") appears in the sales-manager table:
+How a joint deal ("Asha & Rohan") appears in the sales-manager table:
 
 | Mode | What you see |
 |---|---|
-| **Team, primary first** *(default, matches the old sheet)* | One row per team. "Arshdeep & Meisheil" and "Meisheil & Arshdeep" are separate rows. The primary name is in bold. |
+| **Team, primary first** *(default, matches the old sheet)* | One row per team. "Asha & Rohan" and "Rohan & Asha" are separate rows. The primary name is in bold. |
 | **Primary salesperson only** | The whole amount goes to the primary. |
 | **Split equally** | The amount is shared equally between the names. |
 
@@ -339,7 +339,7 @@ One row per **fee line**. Columns (the header names are flexible; a template can
 | Estimate Number | yes | `EST-26-27/264` |
 | Customer Name | yes | `Acme Pvt Ltd` |
 | Subtotal | yes | `50000` or `1,00,000` |
-| SM | yes | `Arshdeep` or `Arshdeep & Meisheil` (first = primary) |
+| SM | yes | `Asha` or `Asha & Rohan` (first = primary) |
 | Category | yes | `Annual fees`, `Set-up fees`, `Integration`, `Customisation` |
 | Report Month | no | `2026-10` or `Oct-26` |
 

@@ -8,7 +8,7 @@ HEAD = {"date": ("estimate date", "date"), "number": ("estimate number", "estima
         "customer": ("customer name", "customer"), "amount": ("subtotal", "amount", "sub total"),
         "sm": ("sm", "sales manager", "salesperson", "owner"), "category": ("category", "catrgory", "fee type", "fee"),
         "period": ("month", "report month")}
-TEMPLATE = "Estimate Date,Estimate Number,Customer Name,Subtotal,SM,Category,Report Month\n2026-10-13,EST-26-27/999,Example Pvt Ltd,50000,Arshdeep & Meisheil,Annual fees,2026-10\n"
+TEMPLATE = "Estimate Date,Estimate Number,Customer Name,Subtotal,SM,Category,Report Month\n2026-10-13,EST-26-27/999,Example Pvt Ltd,50000,Asha & Rohan,Annual fees,2026-10\n"
 MAX_BYTES = 10 * 1024 * 1024
 FILE_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".xlsx": "application/octet-stream", ".csv": "text/csv"}
 
